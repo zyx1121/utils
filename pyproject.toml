@@ -1,0 +1,21 @@
+[tool.poetry]
+name = "zyx-utils"
+version = "0.1.0"
+description = "A collection of utility scripts"
+authors = ["Loki <yongxiang.zhan@outlook.com>"]
+readme = "README.md"
+license = "MIT"
+packages = [{ include = "src", from = "." }]
+
+[tool.poetry.dependencies]
+python = "^3.11"
+typer = "^0.15.2"
+pillow = "^11.1.0"
+requests = "^2.32.3"
+
+[tool.poetry.scripts]
+utils = "src.main:app"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
