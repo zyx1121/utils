@@ -43,17 +43,23 @@ def image(
 
 
 def convert_directory(
-    directory: Path, from_format: str, to_format: str, force: bool = False
+    directory: Path,
+    from_format: ImageFormat,
+    to_format: ImageFormat,
+    force: bool = False,
 ):
-    for file_path in directory.glob(f"*.{from_format}"):
+    for file_path in directory.glob(f"*.{from_format.value}"):
         convert_file(file_path, from_format, to_format, force)
 
 
 def convert_file(
-    file_path: Path, from_format: str, to_format: str, force: bool = False
+    file_path: Path,
+    from_format: ImageFormat,
+    to_format: ImageFormat,
+    force: bool = False,
 ):
     try:
-        if not str(file_path).lower().endswith(f".{from_format.lower()}"):
+        if not str(file_path).lower().endswith(f".{from_format.value}"):
             print(f"Skipping {file_path}: Not a {from_format} file")
             return
 
@@ -63,20 +69,20 @@ def convert_file(
 
         with Image.open(file_path) as img:
             new_stem = f"{file_path.stem}_converted"
-            output_path = file_path.with_name(f"{new_stem}.{to_format}")
+            output_path = file_path.with_name(f"{new_stem}.{to_format.value}")
 
             if output_path.exists() and not force:
                 print(f"Skipping {file_path}: Output file already exists")
                 return
 
-            if from_format.lower() == "png" and to_format.lower() in ["jpg", "jpeg"]:
+            if from_format.value == "png" and to_format.value in ["jpg", "jpeg"]:
                 background = Image.new("RGB", img.size, (255, 255, 255))
                 if img.mode in ["RGBA", "LA"]:
                     background.paste(img, mask=img.getchannel("A"))
                     img = background
 
             save_format = (
-                "JPEG" if to_format.lower() in ["jpg", "jpeg"] else to_format.upper()
+                "JPEG" if to_format.value in ["jpg", "jpeg"] else to_format.value
             )
             img.save(output_path, format=save_format)
             print(f"Converted {file_path} to {output_path}")
