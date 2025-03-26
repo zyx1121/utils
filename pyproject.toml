@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "zyx-utils"
-version = "0.1.0"
+version = "0.1.1"
 description = "A collection of utility scripts"
 authors = ["Loki <yongxiang.zhan@outlook.com>"]
 readme = "README.md"
