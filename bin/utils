@@ -1,9 +1,18 @@
 #!/usr/bin/env bash
-# utils — dispatcher for self-contained PEP 723 scripts under ../scripts/
+# utils — polyglot dispatcher for self-contained scripts under ../scripts/
+# Each script declares its own runtime via shebang (e.g. PEP 723 .py, bash .sh,
+# AppleScript .applescript). The dispatcher just looks up by name and execs.
 set -euo pipefail
+shopt -s nullglob
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SCRIPTS_DIR="$ROOT/scripts"
+
+list_commands() {
+    find "$SCRIPTS_DIR" -maxdepth 1 -type f -perm -u+x 2>/dev/null \
+        | sed -E 's|.*/||; s/\.[a-zA-Z]+$//' \
+        | sort -u
+}
 
 usage() {
     cat <<EOF
@@ -17,14 +26,12 @@ Usage:
 
 Available commands:
 EOF
-    ls "$SCRIPTS_DIR" 2>/dev/null \
-        | sed -n 's/\.py$//p' \
-        | sort \
-        | sed 's/^/  /'
+    list_commands | sed 's/^/  /'
     cat <<EOF
 
-Each command is a self-contained PEP 723 script. First invocation downloads
-its declared deps to uv's cache; later invocations are near-instant.
+Each command is a self-contained executable script — runtime is declared via
+shebang (PEP 723 Python, bash, AppleScript, ...). First invocation may
+download declared deps; later invocations are near-instant.
 EOF
 }
 
@@ -34,17 +41,20 @@ case "${1:-}" in
         exit 0
         ;;
     "--list")
-        ls "$SCRIPTS_DIR" 2>/dev/null | sed -n 's/\.py$//p' | sort
+        list_commands
         exit 0
         ;;
 esac
 
 cmd="$1"; shift
-script="$SCRIPTS_DIR/${cmd}.py"
 
-if [ ! -f "$script" ]; then
-    echo "utils: '$cmd' isn't a thing — try 'utils --help' to see what is" >&2
-    exit 2
-fi
+# Match scripts/<cmd> (extensionless) or scripts/<cmd>.<ext>. First exec-bit
+# match wins. Quoted base + unquoted ".*" lets the glob do the work.
+for candidate in "$SCRIPTS_DIR/$cmd" "$SCRIPTS_DIR/$cmd".*; do
+    if [ -f "$candidate" ] && [ -x "$candidate" ]; then
+        exec "$candidate" "$@"
+    fi
+done
 
-exec uv run "$script" "$@"
+echo "utils: '$cmd' isn't a thing — try 'utils --help' to see what is" >&2
+exit 2
