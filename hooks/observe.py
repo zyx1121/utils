@@ -34,7 +34,7 @@ SCRIPT_EXTS = (".py", ".sh", ".ts", ".js", ".mjs", ".rb", ".pl")
 
 SCRIPT_RUN_RE = re.compile(r"\b(python3?|node|bun|deno|sh|bash|zsh|ruby|perl)\s+\S")
 UV_RUN_RE = re.compile(r"\buv\s+run\b")
-UTILS_CMD_RE = re.compile(r"^\s*utils\s+([\w-]+)")
+UTILS_CMD_RE = re.compile(r"(?:^|[\s;&|()`])utils\s+([\w-]+)")
 PLUGIN_SCRIPT_RE = re.compile(r"/scripts/([\w.\-]+?)\.py\b")
 UTILS_META_FLAGS = {"--help", "-h", "--list"}
 
@@ -53,9 +53,11 @@ def _is_script_run(cmd: str) -> bool:
 
 def _is_utils_call(cmd: str) -> tuple[bool, str | None]:
     # primary path: `utils <name> ...` via the dispatcher in bin/
-    m = UTILS_CMD_RE.match(cmd)
-    if m and m.group(1) not in UTILS_META_FLAGS:
-        return True, m.group(1)
+    # find first non-meta match (handles `utils --list && utils uuid` etc.)
+    for match in UTILS_CMD_RE.finditer(cmd):
+        name = match.group(1)
+        if name not in UTILS_META_FLAGS:
+            return True, name
     # fallback: direct invocation of a plugin script by path
     if "CLAUDE_PLUGIN_ROOT" in cmd or ".claude/plugins" in cmd:
         m = PLUGIN_SCRIPT_RE.search(cmd)
