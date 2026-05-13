@@ -22,7 +22,17 @@ Prerequisite: [`uv`](https://docs.astral.sh/uv/) on PATH. After install, the hoo
 
 ## What's inside
 
-Each script under `scripts/` is one file with PEP 723 inline metadata:
+A `utils` dispatcher (`bin/utils`) is installed onto PATH automatically by the plugin. Use it like a regular CLI:
+
+```bash
+utils --help          # list available commands
+utils uuid --count 3
+utils hash README.md --algo sha256
+utils ssl-check github.com
+utils tokens prompt.txt --model opus
+```
+
+Under the hood, each command is a self-contained Python script with PEP 723 inline metadata:
 
 ```python
 #!/usr/bin/env -S uv run --script
@@ -37,15 +47,9 @@ if __name__ == "__main__":
     typer.run(main)
 ```
 
-Run any of them:
+The dispatcher just `exec uv run`s the matching script. First invocation per command downloads its declared deps to uv's cache; later runs are near-instant. No `pip install` step ever.
 
-```bash
-uv run "${CLAUDE_PLUGIN_ROOT}/scripts/<name>.py" --help
-```
-
-First run downloads declared deps to uv's cache. Later runs are instant. No `pip install` step ever.
-
-The README doesn't enumerate scripts — that list grows and a stale list here would be worse than no list. `ls scripts/` is authoritative.
+The README doesn't enumerate commands — that list grows. `utils --list` is authoritative.
 
 ## Lifecycle
 
@@ -82,11 +86,13 @@ Three layers, kept separate so the cheap thing stays cheap:
 
 ```
 .claude-plugin/plugin.json      manifest
+bin/
+└── utils                       dispatcher — exec uv run on the right script
 hooks/
 ├── hooks.json                  PostToolUse(Write|Bash) → observe.py
 └── observe.py                  append-only jsonl logger
 skills/
-├── utils/SKILL.md              "before writing a script, check scripts/"
+├── utils/SKILL.md              "before writing a script, try `utils <cmd>` first"
 └── utils-review/SKILL.md       /utils:review — find candidates
 agents/
 └── utils-promoter.md           candidate → scripts/<name>.py → PR

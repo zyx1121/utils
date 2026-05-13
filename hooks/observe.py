@@ -34,7 +34,9 @@ SCRIPT_EXTS = (".py", ".sh", ".ts", ".js", ".mjs", ".rb", ".pl")
 
 SCRIPT_RUN_RE = re.compile(r"\b(python3?|node|bun|deno|sh|bash|zsh|ruby|perl)\s+\S")
 UV_RUN_RE = re.compile(r"\buv\s+run\b")
+UTILS_CMD_RE = re.compile(r"^\s*utils\s+([\w-]+)")
 PLUGIN_SCRIPT_RE = re.compile(r"/scripts/([\w.\-]+?)\.py\b")
+UTILS_META_FLAGS = {"--help", "-h", "--list"}
 
 
 def _is_noise_bash(cmd: str) -> bool:
@@ -49,12 +51,16 @@ def _is_script_run(cmd: str) -> bool:
     return bool(SCRIPT_RUN_RE.search(cmd) or UV_RUN_RE.search(cmd))
 
 
-def _is_plugin_script(cmd: str) -> tuple[bool, str | None]:
-    m = PLUGIN_SCRIPT_RE.search(cmd)
-    if not m:
-        return False, None
-    if "CLAUDE_PLUGIN_ROOT" in cmd or ".claude/plugins" in cmd:
+def _is_utils_call(cmd: str) -> tuple[bool, str | None]:
+    # primary path: `utils <name> ...` via the dispatcher in bin/
+    m = UTILS_CMD_RE.match(cmd)
+    if m and m.group(1) not in UTILS_META_FLAGS:
         return True, m.group(1)
+    # fallback: direct invocation of a plugin script by path
+    if "CLAUDE_PLUGIN_ROOT" in cmd or ".claude/plugins" in cmd:
+        m = PLUGIN_SCRIPT_RE.search(cmd)
+        if m:
+            return True, m.group(1)
     return False, None
 
 
@@ -111,8 +117,8 @@ def _build_record(event: dict) -> dict | None:
         stderr_tail = (tool_response.get("stderr", "") or "")[-MAX_STDERR:]
         interrupted = bool(tool_response.get("interrupted", False))
 
-        is_plugin, script_name = _is_plugin_script(cmd)
-        if is_plugin:
+        is_utils, script_name = _is_utils_call(cmd)
+        if is_utils:
             return {
                 **base,
                 "type": "utils-usage",

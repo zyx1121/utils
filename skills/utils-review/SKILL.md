@@ -50,7 +50,7 @@ Cluster of size ≥ 2 = new script candidate. Suggest a kebab-case name.
 
 ### 4. Aggregate `utils-usage`
 
-Group by `script` field. Track:
+Each record's `script` field holds the subcommand name (e.g. `uuid`, `ssl-check`). Group by it. Track:
 - total calls
 - failures: `interrupted=true` OR `stderr_tail` non-empty
 

@@ -85,8 +85,14 @@ chmod +x scripts/<name>.py
 ### 5. Smoke test
 
 ```bash
-uv run scripts/<name>.py --help                  # help reads cleanly
-uv run scripts/<name>.py <real-arg-from-samples> # actually run on real input
+./bin/utils <name> --help                 # help reads cleanly via dispatcher
+./bin/utils <name> <real-arg-from-samples># actually run on real input
+```
+
+Equivalent direct invocations also work for verification:
+
+```bash
+uv run scripts/<name>.py --help
 ```
 
 First call hits the network for deps (5-30 sec); after that it's cached.
@@ -122,8 +128,8 @@ Promoted from `/utils:review` — observed N times in the last X days. Samples:
 - <sample 2, one line>
 
 ## Smoke test
-- [x] `uv run scripts/<name>.py --help` reads cleanly
-- [x] Real input: `<actual command>` → expected output
+- [x] `utils <name> --help` reads cleanly via the dispatcher
+- [x] Real input: `utils <name> <args>` → expected output
 
 ## Notes
 <anything reviewer should know — new deps, edge cases skipped, etc.>

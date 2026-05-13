@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+# utils — dispatcher for self-contained PEP 723 scripts under ../scripts/
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+SCRIPTS_DIR="$ROOT/scripts"
+
+usage() {
+    cat <<EOF
+utils — agent-first CLI toolbox
+
+Usage:
+  utils <command> [args...]
+  utils <command> --help
+  utils --help
+  utils --list
+
+Available commands:
+EOF
+    ls "$SCRIPTS_DIR" 2>/dev/null \
+        | sed -n 's/\.py$//p' \
+        | sort \
+        | sed 's/^/  /'
+    cat <<EOF
+
+Each command is a self-contained PEP 723 script. First invocation downloads
+its declared deps to uv's cache; later invocations are near-instant.
+EOF
+}
+
+case "${1:-}" in
+    ""|"-h"|"--help")
+        usage
+        exit 0
+        ;;
+    "--list")
+        ls "$SCRIPTS_DIR" 2>/dev/null | sed -n 's/\.py$//p' | sort
+        exit 0
+        ;;
+esac
+
+cmd="$1"; shift
+script="$SCRIPTS_DIR/${cmd}.py"
+
+if [ ! -f "$script" ]; then
+    echo "utils: '$cmd' isn't a thing — try 'utils --help' to see what is" >&2
+    exit 2
+fi
+
+exec uv run "$script" "$@"
