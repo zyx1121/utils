@@ -9,7 +9,7 @@
 
 # utils
 
-Agent-first CLI toolbox. Hooks watch the throwaway scripts your agent writes, propose new ones when patterns repeat. Each command is one self-contained Python script — no Poetry, no PyPI, no package management. The plugin ships everything; `uv run` handles deps inline.
+Agent-first CLI toolbox. Hooks watch the throwaway scripts your agent writes, propose new ones when patterns repeat. Each command is a self-contained executable — Python (PEP 723), bash, AppleScript, whatever — runtime declared via shebang. The plugin ships everything; no Poetry, no PyPI, no package management.
 
 ## Install
 
@@ -30,9 +30,10 @@ utils uuid --count 3
 utils hash README.md --algo sha256
 utils ssl-check github.com
 utils tokens prompt.txt --model opus
+echo "hi" | utils clipboard write
 ```
 
-Under the hood, each command is a self-contained Python script with PEP 723 inline metadata:
+Under the hood, each command is a self-contained executable. Most are PEP 723 Python:
 
 ```python
 #!/usr/bin/env -S uv run --script
@@ -47,7 +48,7 @@ if __name__ == "__main__":
     typer.run(main)
 ```
 
-The dispatcher just `exec uv run`s the matching script. First invocation per command downloads its declared deps to uv's cache; later runs are near-instant. No `pip install` step ever.
+Bash or AppleScript also work — anything with a shebang and exec bit. The dispatcher just looks up `scripts/<cmd>` or `scripts/<cmd>.<ext>` and `exec`s the first match; shebang does the rest. First Python invocation downloads declared deps to uv's cache; later runs are near-instant. No `pip install` step ever.
 
 The README doesn't enumerate commands — that list grows. `utils --list` is authoritative.
 
@@ -97,7 +98,8 @@ skills/
 agents/
 └── utils-promoter.md           candidate → scripts/<name>.py → PR
 scripts/
-└── *.py                        each one is PEP 723 self-contained
+└── *                           each one self-contained, exec bit + shebang
+                                (.py PEP 723, .sh, .applescript, ...)
 ```
 
 ## Storage
