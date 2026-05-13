@@ -1,0 +1,115 @@
+```
+██╗   ██╗████████╗██╗██╗     ███████╗
+██║   ██║╚══██╔══╝██║██║     ██╔════╝
+██║   ██║   ██║   ██║██║     ███████╗
+██║   ██║   ██║   ██║██║     ╚════██║
+╚██████╔╝   ██║   ██║███████╗███████║
+ ╚═════╝    ╚═╝   ╚═╝╚══════╝╚══════╝
+```
+
+# utils
+
+Agent-first CLI toolbox. Hooks watch the throwaway scripts your agent writes, propose new ones when patterns repeat. Each command is one self-contained Python script — no Poetry, no PyPI, no package management. The plugin ships everything; `uv run` handles deps inline.
+
+## Install
+
+```
+/plugin marketplace add zyx1121/marketplace
+/plugin install utils@zyx1121
+```
+
+Prerequisite: [`uv`](https://docs.astral.sh/uv/) on PATH. After install, the hook starts logging to `~/.claude/data/utils/observations.jsonl`.
+
+## What's inside
+
+Each script under `scripts/` is one file with PEP 723 inline metadata:
+
+```python
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.11"
+# dependencies = ["typer", "rich", "..."]
+# ///
+"""<purpose>"""
+import typer
+def main(...): ...
+if __name__ == "__main__":
+    typer.run(main)
+```
+
+Run any of them:
+
+```bash
+uv run "${CLAUDE_PLUGIN_ROOT}/scripts/<name>.py" --help
+```
+
+First run downloads declared deps to uv's cache. Later runs are instant. No `pip install` step ever.
+
+The README doesn't enumerate scripts — that list grows and a stale list here would be worse than no list. `ls scripts/` is authoritative.
+
+## Lifecycle
+
+```
+[agent writes throwaway script]
+            │
+            ▼
+   PostToolUse hook (cheap, no LLM)
+            │
+            ▼
+~/.claude/data/utils/observations.jsonl
+            │
+            ▼
+   /utils:review (you, on demand)
+            │   cluster repeats
+            │   flag failing scripts
+            ▼
+  approve candidate → utils-promoter agent
+            │
+            ▼
+       PR to this repo
+            │
+            ▼
+       merge → next session has it
+```
+
+Three layers, kept separate so the cheap thing stays cheap:
+
+- **Observe** (hook) — pure logging. No LLM, no network, ~1ms per event. Filters noise (`ls`, `cat`, `git`, …), records ad-hoc script writes / runs and invocations of this plugin's own scripts.
+- **Analyze** (`/utils:review` skill) — read the log, cluster semantically, present candidates as a table. You decide which to promote.
+- **Promote** (`utils-promoter` agent) — write the new script, open a PR. You merge.
+
+## Layout
+
+```
+.claude-plugin/plugin.json      manifest
+hooks/
+├── hooks.json                  PostToolUse(Write|Bash) → observe.py
+└── observe.py                  append-only jsonl logger
+skills/
+├── utils/SKILL.md              "before writing a script, check scripts/"
+└── utils-review/SKILL.md       /utils:review — find candidates
+agents/
+└── utils-promoter.md           candidate → scripts/<name>.py → PR
+scripts/
+└── *.py                        each one is PEP 723 self-contained
+```
+
+## Storage
+
+```
+~/.claude/data/utils/
+├── observations.jsonl   everything the hook saw
+└── reviewed.jsonl       candidates already promoted or dismissed
+```
+
+No auto-rotation yet. Trim by hand if it ever gets big.
+
+## Why this design
+
+An earlier version was a Poetry-managed PyPI package with a global `utils` CLI. That fit human use — `pip install zyx-utils` once, type `utils foo` in any terminal. But the real consumer is the agent, and PyPI carried: build pipeline, version management, sync-across-devices ceremony, release tagging, signing. All overhead for someone who doesn't need a global binary.
+
+So: plugin ships scripts directly. Agent runs them via `uv run`. New device gets everything from `claude plugin install`. No `pip` step, no version mismatch, no PyPI release dance, no Poetry.
+
+## License
+
+[MIT](LICENSE) — if it breaks, you keep both halves.
