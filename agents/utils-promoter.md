@@ -18,11 +18,29 @@ You promote an approved candidate from `/utils:review` into a real script in `zy
 ## Repo invariants
 
 - Path: `~/utils` (clone with `gh repo clone zyx1121/utils ~/utils` if missing)
-- No Poetry, no pyproject, no src/. Just `scripts/<name>.py`.
-- Each script is **PEP 723 self-contained**, runs via `uv run scripts/<name>.py`
-- Reference style: any existing script under `scripts/` (read one before writing)
+- No Poetry, no pyproject, no src/. Just `scripts/<name>.<ext>` — extension picks the runtime via shebang.
+- Each script is **self-contained** (single file, no external manifest) — Python (PEP 723), bash, or AppleScript depending on the op.
+- Reference style: read an existing script of the same runtime before writing.
 
-## PEP 723 script template
+## Pick the runtime
+
+Dispatcher routes by name and `exec`s the file; the shebang decides what runs. Choose extension by what the op actually needs:
+
+| Use when | Extension | Shebang |
+|----------|-----------|---------|
+| Wrapping a native macOS CLI (`pbcopy`, `screencapture`, `say`) — one-or-few binary calls, no structured args | `.sh` | `#!/usr/bin/env bash` |
+| Multi-subcommand CLI, structured args, deps (`typer`, `rich`, `PIL`, `requests`, …), or wrapping `osascript` via `subprocess` | `.py` | `#!/usr/bin/env -S uv run --script` (with PEP 723 inline metadata) |
+| Single AppleScript-app call, no flags, no `subprocess` needed | `.applescript` | `#!/usr/bin/osascript` |
+
+Examples to read before writing:
+
+- bash: `scripts/clipboard.sh`, `scripts/screenshot.sh`, `scripts/notify.sh`
+- Python (single command): `scripts/uuid.py`, `scripts/hash.py`, `scripts/tokens.py`
+- Python (multi-subcommand wrapping osascript): `scripts/keynote.py`, `scripts/reminders.py`, `scripts/calendar.py`, `scripts/mail.py`
+
+Rule of thumb: if the op has more than one verb or any structured arg, reach for `.py` with typer — bash's case-statement subcommands and AppleScript's `on run argv` are both clumsy compared to typer.
+
+## PEP 723 Python template (when you pick `.py`)
 
 ```python
 #!/usr/bin/env -S uv run --script
@@ -52,6 +70,8 @@ if __name__ == "__main__":
     typer.run(main)
 ```
 
+For multi-subcommand CLIs, swap `typer.run(main)` for a `typer.Typer()` app with `@app.command()` decorators — see `scripts/keynote.py` for a worked example.
+
 ## Steps
 
 ### 1. Sync repo
@@ -72,30 +92,30 @@ git checkout -b fix/<name>-<short-description>
 
 ### 3. Implement
 
-For `new-script`: write `scripts/<suggested-name>.py` matching the template. Cover the cases shown in samples — don't invent edge cases that weren't observed.
+For `new-script`: pick the runtime per the table above, then write `scripts/<suggested-name>.<ext>` using the matching template / closest existing example. Cover the cases shown in samples — don't invent edge cases that weren't observed.
 
 For `fix-existing`: edit the existing script. Keep the CLI flags stable unless the bug REQUIRES a breaking change (ask user first in that case).
 
 ### 4. Make executable
 
 ```bash
-chmod +x scripts/<name>.py
+chmod +x scripts/<name>.<ext>
 ```
 
 ### 5. Smoke test
 
 ```bash
-./bin/utils <name> --help                 # help reads cleanly via dispatcher
+./bin/utils <name> --help                 # help reads cleanly via dispatcher (any extension)
 ./bin/utils <name> <real-arg-from-samples># actually run on real input
 ```
 
-Equivalent direct invocations also work for verification:
+Direct invocation also works as a sanity check — shebang dispatches:
 
 ```bash
-uv run scripts/<name>.py --help
+./scripts/<name>.<ext> --help             # uv run for .py, bash for .sh, osascript for .applescript
 ```
 
-First call hits the network for deps (5-30 sec); after that it's cached.
+First `.py` call hits the network for deps (5-30 sec); after that it's cached. Bash and AppleScript have no per-script install step.
 
 If smoke test fails, fix before committing. Do not commit broken code.
 
