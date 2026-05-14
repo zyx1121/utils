@@ -105,3 +105,4 @@ utils keynote export --pptx ~/Desktop/deck.pptx    # non-Keynote audience
 - No `format-text` (font / size / color), `set-bullets`, or paragraph-indent levels — Keynote's AppleScript dictionary is sparse here. Adjust those in Keynote.app, or render to image and use `add-image`.
 - `add-slide` only appends at end. Reorder via Keynote.app GUI.
 - For untitled docs, `save in <path>` writes the file correctly even though Keynote's `file` property may still report iCloud — trust the path you passed.
+- **Can't rename slide layouts (master slides).** The `name` property is `access="r"` in Keynote's AppleScript dictionary; every rename attempt errors with -10006. To clean up imported PPT layout names (e.g. `8_標題投影片_1` → `Title`): open in Keynote.app, **View → Edit Master Slides**, right-click a master → **Rename Slide**. The only programmatic path is editing the `.iwa` protobufs inside the `.key` Zip via `keynote-parser` (heavy, not exposed by `utils keynote`).
