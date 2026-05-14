@@ -105,7 +105,7 @@ def _build_record(event: dict) -> dict | None:
         content = tool_input.get("content", "") or ""
         return {
             **base,
-            "type": "write-script",
+            "kind": "write-script",
             "path": path,
             "content_hash": _hash(content),
             "content_preview": content[:MAX_CONTENT],
@@ -123,7 +123,7 @@ def _build_record(event: dict) -> dict | None:
         if is_utils:
             return {
                 **base,
-                "type": "utils-usage",
+                "kind": "utils-usage",
                 "script": script_name,
                 "command": cmd[:MAX_CONTENT],
                 "interrupted": interrupted,
@@ -133,7 +133,7 @@ def _build_record(event: dict) -> dict | None:
         if _is_script_run(cmd):
             return {
                 **base,
-                "type": "script-run",
+                "kind": "script-run",
                 "command": cmd[:MAX_CONTENT],
                 "interrupted": interrupted,
                 "stderr_tail": stderr_tail,
