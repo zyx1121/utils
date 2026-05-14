@@ -25,12 +25,22 @@ Prerequisite: [`uv`](https://docs.astral.sh/uv/) on PATH. After install, the hoo
 A `utils` dispatcher (`bin/utils`) is installed onto PATH automatically by the plugin. Use it like a regular CLI:
 
 ```bash
-utils --help          # list available commands
+utils --help              # list available commands
+
+# basics
 utils uuid --count 3
 utils hash README.md --algo sha256
 utils ssl-check github.com
 utils tokens prompt.txt --model opus
+
+# macOS atoms
 echo "hi" | utils clipboard write
+utils screenshot                            # → /tmp/screenshot.png
+utils notify "build done" --sound Glass
+utils reminders add "ping 建超 tomorrow"
+utils calendar list                          # this week
+utils mail search "ICCCAS"
+utils keynote open ~/Desktop/deck.key
 ```
 
 Under the hood, each command is a self-contained executable. Most are PEP 723 Python:
@@ -96,7 +106,7 @@ skills/
 ├── utils/SKILL.md              "before writing a script, try `utils <cmd>` first"
 └── utils-review/SKILL.md       /utils:review — find candidates
 agents/
-└── utils-promoter.md           candidate → scripts/<name>.py → PR
+└── utils-promoter.md           candidate → scripts/<name>.<ext> → PR
 scripts/
 └── *                           each one self-contained, exec bit + shebang
                                 (.py PEP 723, .sh, .applescript, ...)
