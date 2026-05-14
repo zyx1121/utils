@@ -14,6 +14,57 @@ list_commands() {
         | sort -u
 }
 
+# First-line description for the dispatcher's --help listing.
+# .py: first docstring line (PEP 723 metadata block sits above the """).
+# .sh / .bash: first comment line after the shebang.
+# .applescript: first `-- ...` line.
+get_desc() {
+    local f="$1"
+    case "${f##*.}" in
+        py)
+            awk '
+                /^"""/ {
+                    if (seen) exit
+                    seen = 1
+                    line = $0
+                    gsub(/^"""/, "", line)
+                    gsub(/"""$/, "", line)
+                    if (length(line) > 0) { print line; exit }
+                    next
+                }
+                seen { print; exit }
+            ' "$f" 2>/dev/null
+            ;;
+        sh|bash)
+            awk 'NR > 1 && /^#/ && !/^#!/ { sub(/^# */, ""); print; exit }' "$f" 2>/dev/null
+            ;;
+        applescript|scpt)
+            awk '/^--/ { sub(/^-- */, ""); print; exit }' "$f" 2>/dev/null
+            ;;
+    esac
+}
+
+# Two-column "name  description" listing for --help.
+# Sort by name (post-extension-strip) so e.g. `image` lands before `image-resize`,
+# and dedup if two scripts ever share a name with different extensions.
+list_with_descs() {
+    find "$SCRIPTS_DIR" -maxdepth 1 -type f -perm -u+x 2>/dev/null \
+    | while IFS= read -r f; do
+        local n="${f##*/}"
+        n="${n%.*}"
+        printf '%s\t%s\n' "$n" "$f"
+    done \
+    | sort -t$'\t' -k1,1 -u \
+    | while IFS=$'\t' read -r name f; do
+        local desc
+        desc=$(get_desc "$f")
+        # Strip redundant "<name> — " / "<name> - " prefix common in .sh files.
+        desc="${desc#$name — }"
+        desc="${desc#$name - }"
+        printf "  %-16s %s\n" "$name" "$desc"
+    done
+}
+
 usage() {
     cat <<EOF
 utils — agent-first CLI toolbox
@@ -26,7 +77,7 @@ Usage:
 
 Available commands:
 EOF
-    list_commands | sed 's/^/  /'
+    list_with_descs
     cat <<EOF
 
 Each command is a self-contained executable script — runtime is declared via
