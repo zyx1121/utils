@@ -1,11 +1,11 @@
 ---
 name: utils
-description: Personal CLI toolbox of self-contained Python scripts. Use BEFORE writing throwaway scripts for tasks like JSON parsing/extraction, file hashing, UUID/password generation, slugifying, case conversion, CJK/ASCII spacing (pangu), SSL certificate checks, finding processes on ports, image resize/convert, token counting, or other small reusable operations. All commands run via the `utils <name>` dispatcher (no global pip needed — the plugin's bin directory is on PATH automatically, and each script handles its own deps inline via uv).
+description: Personal CLI toolbox of self-contained executables — PEP 723 Python, bash, or AppleScript via shebang. Use BEFORE writing throwaway scripts for JSON parsing / hashing / UUID / slugify / pangu (CJK spacing) / SSL checks / port scanning / image resize-convert / token counting AND macOS app integration (clipboard, screenshot, notify, Reminders, Calendar, Mail, Keynote). All run via the `utils <name>` dispatcher (bin on PATH automatically; each script declares its own deps via shebang — uv for Python, bash for shell, osascript for AppleScript).
 ---
 
 # utils — agent-first CLI toolbox
 
-The plugin installs a `utils` dispatcher onto PATH automatically. Each command is a self-contained PEP 723 Python script under the plugin's `scripts/` directory — `uv run` handles per-script deps inline, no global install needed.
+The plugin installs a `utils` dispatcher onto PATH automatically. Each command is a self-contained executable under the plugin's `scripts/` directory — Python (PEP 723), bash, or AppleScript, runtime chosen by shebang. No global install needed.
 
 ## Discovery
 
@@ -29,6 +29,7 @@ Reasonable starter coverage (verify with `utils --list`):
 - network: `ssl-check`, `port`
 - media: `image` (convert), `image-resize`
 - AI: `tokens` (count for a model)
+- macOS app integration: `clipboard`, `screenshot`, `notify`, `reminders`, `calendar`, `mail`, `keynote`
 
 ## When to skip
 
@@ -60,4 +61,13 @@ utils json data.json --extract '.users[0].name'
 utils tokens prompt.txt --model opus
 utils ssl-check github.com
 utils port 7000
+
+# macOS atoms
+echo "hi" | utils clipboard write
+utils screenshot                            # → /tmp/screenshot.png
+utils notify "build done" --sound Glass
+utils reminders add "ping 建超 tomorrow"
+utils calendar list                          # next 7 days
+utils mail search "ICCCAS"
+utils keynote add-slide --master "Title & Bullets" --title "..." --body "..."
 ```
