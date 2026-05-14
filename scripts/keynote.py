@@ -51,14 +51,19 @@ def escape_as(s: str) -> str:
 
 
 def prepare_text(s: str) -> str:
-    """Build an AppleScript string-concat expression, with `return` between
+    """Build an AppleScript string-concat expression, with `linefeed` between
     lines. Output is meant to be wrapped in "..." by the caller — e.g.
-    multi-line ``World\\nLine 2`` becomes ``World" & return & "Line 2`` which,
-    once wrapped, reads as ``"World" & return & "Line 2"``. Split first, then
-    escape each piece — otherwise backslash escaping breaks the substitution."""
+    multi-line ``World\\nLine 2`` becomes ``World" & linefeed & "Line 2`` which,
+    once wrapped, reads as ``"World" & linefeed & "Line 2"``. Split first, then
+    escape each piece — otherwise backslash escaping breaks the substitution.
+
+    Why `linefeed` (\\n) over `return` (\\r): Keynote's default body placeholder
+    renders a stray backslash character before `return`-separated breaks on some
+    layouts (e.g. two-column L5). `linefeed` works identically on regular shapes
+    and doesn't leak the artifact. It's the safe default."""
     # Accept both literal `\n` (two chars from a shell arg) and real newlines.
     s = s.replace("\\n", "\n")
-    return '" & return & "'.join(escape_as(p) for p in s.split("\n"))
+    return '" & linefeed & "'.join(escape_as(p) for p in s.split("\n"))
 
 
 def absolute(p: Path) -> str:
@@ -231,6 +236,64 @@ end tell
 '''
     run_as(script)
     console.print(f"slide [cyan]{slide}[/] body set")
+
+
+# ── list-shapes ──────────────────────────────────────────────────
+@app.command(name="list-shapes", help="List all shapes (iWork items) on a slide, with kind and current text. Use to find indices for set-shape-text on layouts beyond default title/body.")
+def list_shapes(slide: int = typer.Option(..., "--slide", "-s", help="Slide number (1-based)")):
+    script = f'''
+tell application "Keynote"
+    tell front document
+        tell slide {slide}
+            set theItems to iWork items
+            set output to ""
+            repeat with i from 1 to count of theItems
+                set itemKind to (class of item i of theItems) as string
+                set itemText to ""
+                try
+                    set itemText to (object text of item i of theItems) as string
+                end try
+                set output to output & i & "\t" & itemKind & "\t" & itemText & "<<<EOL>>>"
+            end repeat
+            return output
+        end tell
+    end tell
+end tell
+'''
+    raw = run_as(script)
+    table = Table(title=f"Shapes on slide {slide}", show_header=True)
+    table.add_column("#", justify="right", style="cyan")
+    table.add_column("kind", style="dim")
+    table.add_column("text", style="bold")
+    for line in raw.split("<<<EOL>>>"):
+        line = line.strip()
+        parts = line.split("\t", 2)
+        if len(parts) >= 2:
+            idx, kind = parts[0], parts[1]
+            text = parts[2] if len(parts) == 3 else ""
+            shown = text.replace("\r", " ↩ ").replace("\n", " ↩ ") or "[dim](empty)[/]"
+            table.add_row(idx, kind, shown)
+    console.print(table)
+
+
+# ── set-shape-text ───────────────────────────────────────────────
+@app.command(name="set-shape-text", help="Set text on an arbitrary shape by index. Use list-shapes first to find which index you want (e.g. right column of a two-column layout).")
+def set_shape_text(
+    slide: int = typer.Option(..., "--slide", "-s", help="Slide number"),
+    shape: int = typer.Option(..., "--shape", "-i", help="Shape index from list-shapes"),
+    text: str = typer.Argument(..., help="Text. Use \\n for line breaks."),
+):
+    script = f'''
+tell application "Keynote"
+    tell front document
+        tell slide {slide}
+            set object text of iWork item {shape} to "{prepare_text(text)}"
+        end tell
+    end tell
+end tell
+'''
+    run_as(script)
+    console.print(f"slide [cyan]{slide}[/] shape [cyan]{shape}[/] text set")
 
 
 # ── list-slides ──────────────────────────────────────────────────
