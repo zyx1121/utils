@@ -41,6 +41,7 @@ utils reminders add "ping 建超 tomorrow"
 utils calendar list                          # this week
 utils mail search "ICCCAS"
 utils keynote open ~/Desktop/deck.key
+utils safari url                            # frontmost tab URL
 ```
 
 Under the hood, each command is a self-contained executable. Most are PEP 723 Python:
@@ -61,6 +62,16 @@ if __name__ == "__main__":
 Bash or AppleScript also work — anything with a shebang and exec bit. The dispatcher just looks up `scripts/<cmd>` or `scripts/<cmd>.<ext>` and `exec`s the first match; shebang does the rest. First Python invocation downloads declared deps to uv's cache; later runs are near-instant. No `pip install` step ever.
 
 The README doesn't enumerate commands — that list grows. `utils --list` is authoritative.
+
+## Per-command setup
+
+A few commands need a one-time macOS-side tweak before they work:
+
+- **`safari js` / `safari selection`** — these eval JavaScript in the frontmost Safari tab. Apple gates this behind:
+  1. Safari → Settings → Advanced → ✅ *Show Develop menu in menu bar*
+  2. Develop menu → ✅ *Allow JavaScript from Apple Events*
+
+  Plain `safari url` / `title` / `text` / `tabs` / `open` / `close` work out of the box without this. The `text` op alone covers most "extract page content" agent flows — JS is only needed when you want the current selection or arbitrary DOM queries.
 
 ## Lifecycle
 

@@ -1,6 +1,6 @@
 ---
 name: utils
-description: Personal CLI toolbox of self-contained executables — PEP 723 Python, bash, or AppleScript via shebang. Use BEFORE writing throwaway scripts for JSON parsing / hashing / UUID / slugify / pangu (CJK spacing) / SSL checks / port scanning / image resize-convert / token counting AND macOS app integration (clipboard, screenshot, notify, Reminders, Calendar, Mail, Keynote). All run via the `utils <name>` dispatcher (bin on PATH automatically; each script declares its own deps via shebang — uv for Python, bash for shell, osascript for AppleScript).
+description: Personal CLI toolbox of self-contained executables — PEP 723 Python, bash, or AppleScript via shebang. Use BEFORE writing throwaway scripts for JSON parsing / hashing / UUID / slugify / pangu (CJK spacing) / SSL checks / port scanning / image resize-convert / token counting AND macOS app integration (clipboard, screenshot, notify, Reminders, Calendar, Mail, Keynote, Safari). All run via the `utils <name>` dispatcher (bin on PATH automatically; each script declares its own deps via shebang — uv for Python, bash for shell, osascript for AppleScript).
 ---
 
 # utils — agent-first CLI toolbox
@@ -29,7 +29,7 @@ Reasonable starter coverage (verify with `utils --list`):
 - network: `ssl-check`, `port`
 - media: `image` (convert), `image-resize`
 - AI: `tokens` (count for a model)
-- macOS app integration: `clipboard`, `screenshot`, `notify`, `reminders`, `calendar`, `mail`, `keynote`
+- macOS app integration: `clipboard`, `screenshot`, `notify`, `reminders`, `calendar`, `mail`, `keynote`, `safari`
 
 ## When to skip
 
@@ -70,4 +70,6 @@ utils reminders add "ping 建超 tomorrow"
 utils calendar list                          # next 7 days
 utils mail search "ICCCAS"
 utils keynote add-slide --master "Title & Bullets" --title "..." --body "..."
+utils safari url                            # frontmost tab URL
+utils safari text                           # full visible text of front tab
 ```
