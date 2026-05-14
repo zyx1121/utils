@@ -10,6 +10,28 @@ Two kinds of candidates come out of the log:
 1. **New script candidates** — `write-script` and `script-run` records that repeat semantically (same task pattern, same libraries, same input/output type). Two or more = candidate.
 2. **Existing script issues** — `utils-usage` records where `interrupted=true` or `stderr_tail` is non-empty. Recurring failures = fix candidate.
 
+## Schema
+
+Both log files key each record by a `kind` field — different value spaces for different files.
+
+**`observations.jsonl`** (written by the `observe.py` hook):
+
+```jsonc
+{"ts":"…","session":"…","cwd":"…","kind":"write-script","path":"…","content_hash":"…","content_preview":"…"}
+{"ts":"…","session":"…","cwd":"…","kind":"script-run","command":"…","interrupted":false,"stderr_tail":""}
+{"ts":"…","session":"…","cwd":"…","kind":"utils-usage","script":"…","command":"…","interrupted":false,"stderr_tail":""}
+```
+
+**`reviewed.jsonl`** (written by this skill at Step 9):
+
+```jsonc
+{"ts":"…","cluster_key":"…","name":"…","kind":"new-script","action":"promoted"}
+{"ts":"…","cluster_key":"…","kind":"fix-existing","action":"promoted"}
+{"ts":"…","cluster_key":"…","kind":"new-script","action":"dismissed"}
+```
+
+(Historical note: `observations.jsonl` used `"type"` instead of `"kind"` before 2026-05. Migrate old logs with `jq -c '.kind = .type | del(.type)' obs.jsonl | sponge obs.jsonl` if needed.)
+
 ## Steps
 
 ### 1. Check log exists
