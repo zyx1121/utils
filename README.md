@@ -139,6 +139,7 @@ lib/
 └── _envelope.py                shared output helpers — emit / fail / parse_host
 skills/
 ├── keynote/SKILL.md            Keynote 簡報 building blocks (AppleScript-based)
+├── keynote-style/SKILL.md      Loki's deck style guide — cover/outline/content rules + Chinese speaker notes
 ├── morning/SKILL.md            /utils:morning — daily briefing from chronicle / TODO / calendar / mail
 ├── post/SKILL.md               /utils:post — idea → ~1500-word blog → private gist
 ├── skills-review/SKILL.md      /skills:review — lint Claude Code skills for staleness
