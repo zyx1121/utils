@@ -40,6 +40,9 @@ WebSearch <2-3 個方向：社群討論 / 技術比較 / prior art>
 
 ### 3. Draft markdown to `/tmp/<slug>.md`
 
+**Before drafting**: read `reference.md` 一次（in this same skill dir）。
+那是從過去文章 anatomize 出來的 skeleton / voice / 排版 / 禁用清單，draft 時對照用。
+
 Slug 用 kebab-case 從標題抽，例：`agent-first-cli.md`。
 
 **風格 checklist**（個人 blog ≠ 技術文件 ≠ 學術 paper）：
@@ -75,11 +78,15 @@ gh gist create /tmp/<slug>.md --desc "<one-line hook from article>"
 
 ## Style anchors
 
-對齊 voice 時可參考：
+對齊 voice 時，按優先序：
 
-- `~/dotfiles/.claude/CLAUDE.md` 的 "Coding" 段 — Loki 對文字風格的明文要求（"像朋友聊天，不是客服回工單"）
-- `~/utils/README.md` — README 風（口語、ASCII art、自嘲 MIT license「if it breaks, you keep both halves」）
-- 過去寫過的 gist — `gh gist list --secret | head` 看歷史 voice
+1. **`reference.md`** (this skill dir) — anatomy + voice pattern + 禁用清單，draft 前必讀
+2. **Canonical post**: [agent-first-cli gist](https://gist.github.com/zyx1121/f038ad1d58beb3463030004c9cd22bc4) — 範例文，看 7 個 move 怎麼鋪
+3. `~/dotfiles/.claude/CLAUDE.md` 的 "Coding" 段 — Loki 對文字風格的明文要求
+4. `~/utils/README.md` — README 風（口語、ASCII art、自嘲 MIT license）
+5. 過去 gist — `gh gist list --secret | head` 看歷史 voice 偏移
+
+寫多了，定期 update `reference.md` — 新 pattern 加入、廉價招砍掉。
 
 ## Quality bar
 
