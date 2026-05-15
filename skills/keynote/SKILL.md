@@ -30,6 +30,7 @@ utils keynote delete-slide --slide N
 utils keynote set-title      --slide N <text>
 utils keynote set-body       --slide N <text>
 utils keynote set-shape-text --slide N --shape M <text>   # non-default placeholders
+utils keynote delete-shape   --slide N --shape M          # remove a placeholder/shape (use list-shapes to find index)
 utils keynote list-shapes    --slide N                    # discover shape indices
 
 # Content
@@ -100,6 +101,7 @@ utils keynote export --pptx ~/Desktop/deck.pptx    # non-Keynote audience
 - **`preview` after batch edits** — catches layout drift before the user opens the file.
 - **Prefer master names over indices** when the deck might re-theme; names usually survive, indices don't.
 - **`set-title` / `set-body` only touch the layout's default placeholders.** For multi-placeholder layouts (two-column bullets, image+text, etc.), use `list-shapes --slide N` to see all `iWork item` indices, then `set-shape-text --slide N --shape M <text>`.
+- **Strip empty placeholders before exporting** when a slide uses `add-image` to replace bullet placeholders. The placeholder's outline still renders in PDF/PPTX export. `list-shapes` to find the empty body shape index, then `delete-shape` to remove it.
 
 ## Known limits
 
