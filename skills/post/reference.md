@@ -16,7 +16,7 @@ Canonical examples:
 | Skeleton | 適用 | 標誌語 |
 |----------|------|--------|
 | **1A. Thesis-driven** (議論文) | 有論點要 argue、push inversion、對抗業界 default | "我覺得 X 該換成 Y" |
-| **1B. Retrospective** (個人視角) | 分享自己做了什麼、reflection、純記錄當下 | "我最近 X 了，想分享一下" |
+| **1B. Retrospective** (個人視角) | 分享自己做了什麼、reflection、純記錄當下 | "我最近 X 了，分享一下" |
 
 選錯 skeleton 是大部分 voice 問題的根源 — 想 share 自己做的事卻用 thesis 結構，會變 lecture / "一包一貶"；想 push 觀點卻用 retrospective 結構，論點 hedge 過頭沒 takeaway。
 
@@ -42,24 +42,22 @@ Canonical examples:
 6. **Closing**：「Notion CLI 不是技術突破，它是承認 agent 已經改變了「誰在用工具」這件事。」
 7. **References**：結尾 `*References*` 區
 
-### 1B. Retrospective (5-6 moves, ~1200 字)
+### 1B. Retrospective (4-5 moves, ~1200 字)
 
 | # | Move | Length | Purpose |
 |---|------|--------|---------|
 | 1 | Personal news | 1 句 | 「我最近 X 了」直陳事實，不掛 thesis |
 | 2 | Why now | ~150 字 | 為什麼這個時機做這件事，個人脈絡 |
 | 3 | What I did | ~600 字 | N 個具體項目，每項「我用 X 做什麼」直接敘述，不加抽象 category |
-| 4 | What I learned | ~300 字 | 觀察自己的 thinking pattern（不是命令式 self-check） |
-| 5 | Open invitation | 2-3 句 | 邀請讀者 share，不下「該怎麼做」結論 |
-| 6 | References | bullet list | Markdown hyperlink |
+| 4 | What I learned | ~300 字 | 觀察自己的 thinking pattern，最後一條帶 punchline 自然收尾 |
+| 5 | References | bullet list | Markdown hyperlink |
 
-範例（我重寫了 GitHub profile）5 個 move 對應：
+範例（我重寫了 GitHub profile）4 個 move 對應：
 
 1. **Personal news**：「最近重寫了一次自己的 GitHub profile。」
-2. **Why now**：「主要動機是過去一年多花了大量時間在想「怎麼跟 agent 合作」這件事⋯這些問題的答案慢慢沉澱成幾個具體 repo。」
+2. **Why now**：「主要動機是過去一年多花了大量時間在想「怎麼跟 agent 合作」這件事⋯下面 5 個 repo 各自回應其中一塊。」
 3. **What I did**：## dotfiles / utils / scriptorium / baogan / outpost 5 個項目
-4. **What I learned**：## 重寫過程中想的事 3 條 pattern observation
-5. **Open invitation**：「沒有標準答案 — 如果你最近也在想要重寫 profile，可以 share 一下你的版本給我看。」
+4. **What I learned**：## 重寫過程中想的事 3 條 pattern，最後一條收在「Profile 該長成 living document，不是 final answer」punchline
 
 ### 怎麼選
 
@@ -118,26 +116,17 @@ Canonical examples:
 
 > 如果你跟我一樣在寫 Claude Code plugin、skill、utility script
 
-### Punchline 收段 *(thesis 主用)*
+### Punchline 收段 *(兩種都用)*
 
 每段最後一句要能 stand alone。
 
-**範例**:
+**範例（thesis）**:
 > 換句話說，CLI 是 agent 早就會的介面，你不用教。
 
-> 沒有 escape hatch 的 CLI 等於把 agent 鎖在你的抽象裡 — 你想不到的用例它就做不到。
+**範例（retrospective）**:
+> Profile 該長成 living document，不是 final answer。
 
-讀者跳讀也能抓到 thesis — thesis 段落首尾要扛得住單獨被截圖貼出來。Retrospective 用了會聽起來像 sermon，避免。
-
-### Open invitation 收尾 *(retrospective-only)*
-
-不下結論，邀請對話：
-
-> 沒有標準答案 — 如果你也在想 X，可以 share 一下你的版本給我看。
-
-> 蠻好奇大家現在怎麼寫的。
-
-對 retrospective 是必要 — 沒這條等於變 thesis 強行降下結論。
+讀者跳讀也能抓到 thesis / takeaway — 段落首尾要扛得住單獨被截圖貼出來。
 
 ---
 
@@ -170,9 +159,10 @@ Canonical examples:
 | Markdown footnote `[^1]` | References 區就夠 |
 | 「我會告訴你...」/「接下來介紹...」 | Meta-narrative，跳過 |
 | 每段都粗體強調 | 稀釋 takeaway |
-| 「綜合以上幾點」收尾 | 用 punchline / invitation 不用 summary |
+| 「綜合以上幾點」收尾 | 用 punchline 不用 summary |
 | 自行發明抽象 category 當分類軸 | 例：硬塞「Identity / Capability / Memory」打包 — 改成具體「我用 X 做 Y」 |
 | Paraphrase README 上的 stars / forks 數字 | 一律 `gh repo view --json stargazerCount,forkCount` 拿即時值，README stat 是 stale |
+| 文學化動詞（"慢慢沉澱"、"徐徐展開"、"緩緩流淌"） | Loki voice 簡潔有力 — 改 punchy 動詞（"變成"、"組起來"、"做出來"） |
 
 ### 4B. Retrospective 特別禁
 
@@ -181,8 +171,9 @@ Canonical examples:
 | Contrast section（"為什麼不是 X、不是 Y"） | 結構性製造對立，會變 lecture |
 | 「該 / 應該 / 不該」命令式 | 個人視角不下普世規範 |
 | 把他人 work 當 negative example 開頭 | 即使後面 disclaimer "他很厲害" 結構上仍是貶低 |
-| Implication 段「下次寫 X 該做 Y」 | 那是 thesis 結尾風，retrospective 用 open invitation |
+| Implication 段「下次寫 X 該做 Y」 | 那是 thesis 結尾風，retrospective 用 punchline 自然收 |
 | Goldilocks 三段 | 排比結構暗示「前兩個 inferior、第三個 superior」— 不適合純分享 |
+| 「share 一下你的版本」/「蠻好奇大家怎麼寫」 | 強行邀請互動 — 單純分享即可，讀者要回應自然會回 |
 
 ### 4C. Thesis 特別禁
 
@@ -215,8 +206,9 @@ Draft 完跑一次 — 對應你選的 skeleton。
 - [ ] What I did 是「我用 X 做 Y」具體敘述，沒 abstract category？
 - [ ] 沒有 contrast section / 沒有 Goldilocks？
 - [ ] What I learned 是觀察自己 pattern，不是命令式 advice？
-- [ ] Closing 是 open invitation 不是「該怎麼做」結論？
+- [ ] 結尾在 What I learned 最後一條 punchline 自然收，沒有強行 invitation？
 - [ ] 提到他人 work 時純 neutral / 不當 negative example？
+- [ ] 動詞 punchy 不文學（無「慢慢沉澱」之類）？
 - [ ] References markdown hyperlink？
 - [ ] 字數對齊 ±20%？
 - [ ] 內文 emoji 0？
@@ -234,4 +226,4 @@ Draft 完跑一次 — 對應你選的 skeleton。
 - 範例 gist 累積後 → 多選幾篇當 reference，標 voice 子類
 - 第三種 skeleton 出現（敘事 / case study / 對話形式 ...） → 加 1C
 
-每寫 5 篇 review 一次。
+每寫 5 篇 review 一次。**Codify 之前先 N≥2 觀察**：第一次出現的 pattern 是 sample，不是 rule。
