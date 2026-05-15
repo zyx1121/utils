@@ -143,9 +143,8 @@ skills/
 ├── morning/SKILL.md            /utils:morning — daily briefing from chronicle / TODO / calendar / mail
 ├── post/SKILL.md               /utils:post — idea → ~1500-word blog → private gist
 ├── pve/SKILL.md                PVE / gateway atoms — wraps utils pve subcommands
-├── skills-review/SKILL.md      /skills:review — lint Claude Code skills for staleness
-├── utils/SKILL.md              "before writing a script, try `utils <cmd>` first"
-└── review/SKILL.md             /utils:review — find candidates
+├── review/SKILL.md             /utils:review — find candidates (usage log) + lint personal skills (static)
+└── utils/SKILL.md              "before writing a script, try `utils <cmd>` first"
 agents/
 ├── pve-provisioner.md          one-shot VM provisioning: clone + DNS + forward + Caddy + smoke test
 └── utils-promoter.md           candidate → scripts/<name>.<ext> → PR
