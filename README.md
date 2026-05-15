@@ -149,9 +149,6 @@ skills/
 agents/
 ├── pve-provisioner.md          one-shot VM provisioning: clone + DNS + forward + Caddy + smoke test
 └── utils-promoter.md           candidate → scripts/<name>.<ext> → PR
-monitors/
-├── monitors.json               background monitor configs (per-plugin)
-└── pve-vm-state.sh             notify on PVE VM state transitions (silent until something changes)
 scripts/
 └── *                           each one self-contained, exec bit + shebang
                                 (.py PEP 723, .sh, .applescript, ...)

@@ -1,7 +1,0 @@
-[
-  {
-    "name": "pve-vm-state",
-    "command": "bash ${CLAUDE_PLUGIN_ROOT}/monitors/pve-vm-state.sh",
-    "description": "Notify on PVE VM state changes (running ↔ stopped). Polls qm list every 30s; emits only when a VM transitions."
-  }
-]

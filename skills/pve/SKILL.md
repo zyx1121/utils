@@ -41,10 +41,6 @@ utils pve caddy parser.zyx.tw 10.10.10.42:8080
 - **Full provisioning chain** (clone → DNS → forward → Caddy → smoke test) should go through the `pve-provisioner` agent, not done by hand. Invoke it when the user asks for the whole sequence in one breath.
 - **Stop / forward del / caddy domain rewrites** are destructive. Confirm with the user, even when the agent has free rein on safe ops.
 
-## Background monitor
-
-The `pve-vm-state` monitor (in `monitors/`) polls `qm list` every 30 s. It stays silent until a VM transitions between states (running ↔ stopped) or appears/disappears, then emits one JSON event per change. Snapshot persists at `$XDG_RUNTIME_DIR/utils-pve-vm-state.snapshot` so a restart doesn't replay every running VM.
-
 ## When to consult DEVICES.md
 
 If the user asks about a *specific* host or VM by role ("the auth VM", "the AFC machine", "what IP is the gateway?"), read `~/.claude/DEVICES.md` — it has the live mapping. This skill stays infrastructure-agnostic on purpose.
