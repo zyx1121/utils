@@ -16,6 +16,7 @@ import sys as _sys
 from pathlib import Path as _Path
 _sys.path[:] = [p for p in _sys.path if _Path(p).resolve() != _Path(__file__).resolve().parent]
 
+import shutil
 import subprocess
 from pathlib import Path
 from typing import Optional
@@ -31,6 +32,7 @@ app = typer.Typer(
 )
 console = Console()
 err = Console(stderr=True, style="red")
+warn = Console(stderr=True, style="yellow")
 
 
 def run_as(script: str) -> str:
@@ -92,16 +94,71 @@ end tell
 
 
 # ── open ─────────────────────────────────────────────────────────
-@app.command(name="open", help="Open a Keynote (.key) or PowerPoint (.pptx) file.")
-def open_cmd(path: Path = typer.Argument(..., help="Path to file")):
-    abs_path = absolute(path)
-    if not Path(abs_path).exists():
-        err.print(f"keynote: file not found: {abs_path}")
+@app.command(
+    name="open",
+    help=(
+        "Open a Keynote (.key) or PowerPoint (.pptx) file. "
+        "Use --save-to when starting from a template — Keynote autosaves "
+        "continuously and `save in <path>` is export-only (it does NOT "
+        "rebind the document), so without --save-to every edit writes back "
+        "to the original file."
+    ),
+)
+def open_cmd(
+    path: Path = typer.Argument(..., help="Path to file"),
+    save_to: Optional[Path] = typer.Option(
+        None,
+        "--save-to",
+        help=(
+            "Filesystem-copy the source to this path first, then open the copy. "
+            "Use this when starting from a template — autosave will lock to "
+            "the new path instead of the template. Parent dirs are created."
+        ),
+    ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="Overwrite --save-to destination if it already exists.",
+    ),
+):
+    abs_src = absolute(path)
+    if not Path(abs_src).exists():
+        err.print(f"keynote: file not found: {abs_src}")
         raise typer.Exit(2)
+
+    if save_to is not None:
+        abs_dst = absolute(save_to)
+        dst = Path(abs_dst)
+        if dst.exists() and not force:
+            err.print(
+                f"keynote: destination already exists: {abs_dst}\n"
+                f"        re-run with --force to overwrite"
+            )
+            raise typer.Exit(2)
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        # .key on modern macOS is a single Zip file, but legacy / iCloud copies
+        # are sometimes folder bundles — handle both shapes.
+        if Path(abs_src).is_dir():
+            if dst.exists():
+                shutil.rmtree(abs_dst)
+            shutil.copytree(abs_src, abs_dst)
+        else:
+            shutil.copy2(abs_src, abs_dst)
+        open_path = abs_dst
+        prefix = f"copied: {abs_src} → {abs_dst}\n"
+    else:
+        open_path = abs_src
+        prefix = ""
+        warn.print(
+            f"keynote (warn): opened in place — autosave writes back to {abs_src}.\n"
+            f"               If this is a template, use `open --save-to <new-path>` "
+            f"to lock autosave to a copy instead."
+        )
+
     script = f'''
 tell application "Keynote"
     activate
-    open POSIX file "{escape_as(abs_path)}"
+    open POSIX file "{escape_as(open_path)}"
     delay 1
     tell front document
         return name & "\t" & (count of slides)
@@ -110,7 +167,7 @@ end tell
 '''
     raw = run_as(script)
     name, count = raw.split("\t")
-    console.print(f"opened: [bold]{name}[/] ([cyan]{count}[/] slides)")
+    console.print(prefix + f"opened: [bold]{name}[/] ([cyan]{count}[/] slides)")
 
 
 # ── info ─────────────────────────────────────────────────────────
@@ -345,8 +402,24 @@ end tell
 
 
 # ── save ─────────────────────────────────────────────────────────
-@app.command(help="Save the front document. Optionally save to a new path.")
-def save(path: Optional[Path] = typer.Argument(None, help="Save path (omit to save in place)")):
+@app.command(
+    help=(
+        "Save the front document. With a path, writes a COPY there (Keynote's "
+        "`save in <path>` is export-only — the doc remains bound to its "
+        "original file, so subsequent autosaves still write to the original). "
+        "To start from a template and have autosave follow a new path, use "
+        "`open <template> --save-to <new-path>` instead."
+    )
+)
+def save(
+    path: Optional[Path] = typer.Argument(
+        None,
+        help=(
+            "Path to write a copy to. Omit to save the doc in place at its "
+            "current location. NOTE: passing a path does NOT rebind the doc."
+        ),
+    ),
+):
     if path:
         abs_path = absolute(path)
         script = f'''
@@ -355,10 +428,10 @@ tell application "Keynote"
 end tell
 '''
         run_as(script)
-        # Trust the user-specified path: Keynote may still track iCloud for
-        # untitled docs even after `save in`, so its `file` property is
-        # unreliable for reporting.
-        console.print(f"saved: {abs_path}")
+        # `save in <path>` writes a copy but does not change the doc's `file`
+        # binding — so we trust the user-supplied path for the report, not
+        # `file of front document` (which still points at the original).
+        console.print(f"saved copy: {abs_path}")
     else:
         script = '''
 tell application "Keynote"
