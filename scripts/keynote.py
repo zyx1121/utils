@@ -295,6 +295,23 @@ end tell
     console.print(f"slide [cyan]{slide}[/] body set")
 
 
+# ── set-notes ────────────────────────────────────────────────────
+@app.command(name="set-notes", help="Set the presenter notes (speaker notes) of a slide. Notes show in Keynote's presenter view during a slideshow but stay invisible to the audience — useful for drafting talk tracks alongside the slide.")
+def set_notes(
+    slide: int = typer.Option(..., "--slide", "-s", help="Slide number (1-based)"),
+    text: str = typer.Argument(..., help="Notes text. Use \\n for line breaks."),
+):
+    script = f'''
+tell application "Keynote"
+    tell front document
+        set presenter notes of slide {slide} to "{prepare_text(text)}"
+    end tell
+end tell
+'''
+    run_as(script)
+    console.print(f"slide [cyan]{slide}[/] notes set")
+
+
 # ── list-shapes ──────────────────────────────────────────────────
 @app.command(name="list-shapes", help="List all shapes (iWork items) on a slide, with kind and current text. Use to find indices for set-shape-text on layouts beyond default title/body.")
 def list_shapes(slide: int = typer.Option(..., "--slide", "-s", help="Slide number (1-based)")):
