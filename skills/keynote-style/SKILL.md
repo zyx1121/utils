@@ -7,6 +7,18 @@ description: Use when user is creating, editing, or reviewing a Keynote / slide 
 
 每份 deck 同一套規範：結構固定、投影片英文、speaker note 中文。
 
+## Tooling
+
+執行一律走 `utils keynote`（已在 PATH，`utils keynote --help` 看完整 atom 列表）。常用：
+
+- `list-slides` / `list-shapes` — 先讀現況
+- `set-title` / `set-body` / `set-notes` — 改單張的標題 / bullets / 中文 note
+- `add-slide` / `delete-slide` / `delete-shape` — 結構調整
+- `set-shape-text` — 處理非 default placeholder 的 layout（如雙欄）
+- `preview` / `export` — 出 PDF 對排版
+
+`utils keynote` 還在長，atom 不夠用時補一個比繞回 raw `osascript` 划算 — 走 `/utils:review` 讓它升級成新 atom。
+
 ## Deck Structure
 
 ### Slide 1 — Cover
