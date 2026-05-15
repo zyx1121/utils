@@ -72,6 +72,41 @@ if __name__ == "__main__":
 
 For multi-subcommand CLIs, swap `typer.run(main)` for a `typer.Typer()` app with `@app.command()` decorators — see `scripts/keynote.py` for a worked example.
 
+## Output contract (mandatory for `.py` scripts)
+
+All Python scripts emit JSON envelopes via `lib/_envelope.py` so agents can pipe to `jq` and humans get pretty output for free. Bash and AppleScript scripts are too small to bother — Python only.
+
+Paste this shim at the top of every new `.py` script (right after the PEP 723 metadata, before functional imports):
+
+```python
+import sys as _sys
+from pathlib import Path as _Path
+
+# Drop our dir off sys.path so stdlib resolves cleanly (siblings shadow json/uuid)
+_sys.path[:] = [p for p in _sys.path if _Path(p).resolve() != _Path(__file__).resolve().parent]
+
+# Add ../lib for shared output helpers
+_LIB = str(_Path(__file__).resolve().parent.parent / "lib")
+if _LIB not in _sys.path:
+    _sys.path.insert(0, _LIB)
+```
+
+Then `from _envelope import emit, fail` (and `parse_host` if the script accepts a hostname or URL). Never `print()` raw text from the body — every exit path is `emit(data, metadata, human=_human)` for success or `fail(message, why=..., hint=...)` for errors.
+
+**Data shape**: jq-friendly, depends on the command:
+- A dict when there's a fixed set of fields (`ssl-check`, `hash`, `tokens`).
+- A list when the script produces multiple items (`uuid --count 5`).
+- A scalar when the script extracts one value (`json --extract`).
+
+**Human renderer**: pass a `human(data, metadata)` callback to `emit` that prints the same data in human form (key:value lines, one-per-line, table — whatever fits). The renderer fires only when stdout is a TTY.
+
+**Errors**: `fail(message, why=..., hint=...)` exits non-zero and prints the three-layer envelope (JSON on pipe, three stderr lines on TTY).
+- `message` — what broke, plain English
+- `why` — the underlying cause (often the exception text)
+- `hint` — what to try next, even if you're not 100% sure
+
+Errors are first-class API. Agents read errors before they read `--help`. Reference: `scripts/ssl-check.py` (URL-first, fixed-dict data, full fail coverage) and `scripts/uuid.py` (list data, simple human renderer).
+
 ## Steps
 
 ### 1. Sync repo

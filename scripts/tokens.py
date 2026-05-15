@@ -10,18 +10,25 @@
 """Count tokens in a file or string (cl100k_base via tiktoken)."""
 from __future__ import annotations
 
-# Some siblings in this directory shadow stdlib modules (json.py, uuid.py).
-# Drop our directory off sys.path so typer/rich/etc resolve those from stdlib.
 import sys as _sys
 from pathlib import Path as _Path
+
+# Some siblings in this directory shadow stdlib modules (json.py, uuid.py).
+# Drop our directory off sys.path so typer/rich/etc resolve those from stdlib.
 _sys.path[:] = [p for p in _sys.path if _Path(p).resolve() != _Path(__file__).resolve().parent]
+
+# Add ../lib for shared output helpers (envelope, fail).
+_LIB = str(_Path(__file__).resolve().parent.parent / "lib")
+if _LIB not in _sys.path:
+    _sys.path.insert(0, _LIB)
 
 from enum import Enum
 from pathlib import Path
 
 import tiktoken
 import typer
-from rich import print
+
+from _envelope import emit, fail  # noqa: E402
 
 
 class TokenModel(str, Enum):
@@ -41,6 +48,14 @@ _ENCODING_FOR = {
 }
 
 
+def _human(data: dict, _meta: dict) -> None:
+    suffix = " (approximate)" if data["approximate"] else ""
+    print(f"tokens: {data['tokens']}{suffix}")
+    print(f"chars:  {data['chars']}")
+    print(f"source: {data['source']}")
+    print(f"model:  {data['model']}")
+
+
 def main(
     target: str = typer.Argument(help="File path or raw text"),
     model: TokenModel = typer.Option(
@@ -55,22 +70,34 @@ def main(
     """
 
     path = Path(target)
-    if path.is_file():
+    is_file = path.is_file()
+    if is_file:
         content = path.read_text(encoding="utf-8", errors="replace")
-        source = str(path)
     else:
         content = target
-        source = "(stdin string)"
 
-    enc = tiktoken.get_encoding(_ENCODING_FOR[model])
+    try:
+        enc = tiktoken.get_encoding(_ENCODING_FOR[model])
+    except Exception as e:
+        fail(
+            f"couldn't load tokenizer for {model.value}",
+            why=str(e),
+            hint="check network access — tiktoken downloads encoding files on first use",
+        )
+
     count = len(enc.encode(content))
 
-    approx = model in {TokenModel.OPUS, TokenModel.SONNET, TokenModel.HAIKU}
-    suffix = " (approximate)" if approx else ""
-    print(f"tokens: {count}{suffix}")
-    print(f"chars:  {len(content)}")
-    print(f"source: {source}")
-    print(f"model:  {model.value}")
+    emit(
+        {
+            "tokens": count,
+            "chars": len(content),
+            "source": str(path) if is_file else "(inline string)",
+            "model": model.value,
+            "encoding": _ENCODING_FOR[model],
+            "approximate": model in {TokenModel.OPUS, TokenModel.SONNET, TokenModel.HAIKU},
+        },
+        human=_human,
+    )
 
 
 if __name__ == "__main__":
