@@ -353,6 +353,25 @@ end tell
     console.print(f"slide [cyan]{slide}[/] shape [cyan]{shape}[/] text set")
 
 
+# ── delete-shape ─────────────────────────────────────────────────
+@app.command(name="delete-shape", help="Delete a shape from a slide by index. Use list-shapes first to find the index — useful for stripping empty placeholders (e.g. body placeholder on slides where you'll add-image directly) that would otherwise leave a faint outline in the export.")
+def delete_shape(
+    slide: int = typer.Option(..., "--slide", "-s", help="Slide number (1-based)"),
+    shape: int = typer.Option(..., "--shape", "-i", help="Shape index from list-shapes"),
+):
+    script = f'''
+tell application "Keynote"
+    tell front document
+        tell slide {slide}
+            delete iWork item {shape}
+        end tell
+    end tell
+end tell
+'''
+    run_as(script)
+    console.print(f"slide [cyan]{slide}[/] shape [cyan]{shape}[/] deleted")
+
+
 # ── list-slides ──────────────────────────────────────────────────
 @app.command(name="list-slides", help="List slides of the front document with titles.")
 def list_slides():
