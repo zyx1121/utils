@@ -1,6 +1,6 @@
 {
   "name": "utils",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "description": "Agent-first CLI toolbox. Hooks watch ad-hoc scripts, propose new ones when patterns repeat. Each command is one self-contained PEP 723 script.",
   "author": {
     "name": "Loki",
