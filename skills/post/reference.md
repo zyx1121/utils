@@ -7,6 +7,8 @@ Canonical examples:
 
 讀過抓 voice，draft 時對照用哪些招。
 
+> **Drafting method**: 先用英文 outline / 思考，再翻成中文。英文逼動詞 punchy、句子 lean。翻譯動作會自動砍掉中文 hedge filler（"其實"、"基本上"、"慢慢"）— 中文翻不出對應英文時，通常是堆贅字了，砍掉。
+
 ---
 
 ## 1. Skeletons
