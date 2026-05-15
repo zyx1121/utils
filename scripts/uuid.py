@@ -9,11 +9,17 @@
 """Generate UUIDs (v4 random or v7 timestamp-ordered)."""
 from __future__ import annotations
 
-# This file is named uuid.py — kick our directory off sys.path so stdlib
-# `uuid` (and typer's internal `from uuid import UUID`) resolve correctly.
 import sys as _sys
 from pathlib import Path as _Path
+
+# This file is named uuid.py — kick our directory off sys.path so stdlib
+# `uuid` (and typer's internal `from uuid import UUID`) resolve correctly.
 _sys.path[:] = [p for p in _sys.path if _Path(p).resolve() != _Path(__file__).resolve().parent]
+
+# Add ../lib for shared output helpers (envelope, fail).
+_LIB = str(_Path(__file__).resolve().parent.parent / "lib")
+if _LIB not in _sys.path:
+    _sys.path.insert(0, _LIB)
 
 import os
 import time
@@ -21,7 +27,8 @@ import uuid as stdlib_uuid
 from enum import Enum
 
 import typer
-from rich import print
+
+from _envelope import emit, fail  # noqa: E402
 
 
 class UUIDVersion(str, Enum):
@@ -42,6 +49,11 @@ def uuid7() -> str:
     return f"{hex_str[0:8]}-{hex_str[8:12]}-{hex_str[12:16]}-{hex_str[16:20]}-{hex_str[20:32]}"
 
 
+def _human(data: list[str], _meta: dict) -> None:
+    for u in data:
+        print(u)
+
+
 def main(
     count: int = typer.Option(1, "--count", help="How many UUIDs to generate"),
     version: UUIDVersion = typer.Option(UUIDVersion.V4, "--version", help="UUID version (4 or 7)"),
@@ -51,14 +63,18 @@ def main(
     """
 
     if count < 1:
-        print("count needs to be at least 1, otherwise why are you here")
-        raise typer.Exit(1)
+        fail(
+            f"--count must be at least 1, got {count}",
+            why="generating zero or fewer UUIDs has no defined output",
+            hint="pass --count 1 (default) or higher",
+        )
 
-    for _ in range(count):
-        if version is UUIDVersion.V4:
-            print(str(stdlib_uuid.uuid4()))
-        else:
-            print(uuid7())
+    if version is UUIDVersion.V4:
+        uuids = [str(stdlib_uuid.uuid4()) for _ in range(count)]
+    else:
+        uuids = [uuid7() for _ in range(count)]
+
+    emit(uuids, {"count": count, "version": version.value}, human=_human)
 
 
 if __name__ == "__main__":

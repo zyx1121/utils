@@ -9,11 +9,17 @@
 """Inspect, prettify, minify, validate, or extract values from JSON files."""
 from __future__ import annotations
 
-# This file is named json.py — kick our directory off sys.path so stdlib
-# `json` (and typer's internals) resolve correctly instead of shadowing.
 import sys as _sys
 from pathlib import Path as _Path
+
+# This file is named json.py — drop our dir off sys.path so stdlib `json`
+# (and typer's internals) resolve correctly instead of shadowing.
 _sys.path[:] = [p for p in _sys.path if _Path(p).resolve() != _Path(__file__).resolve().parent]
+
+# Add ../lib for shared output helpers (envelope, fail, parse_host).
+_LIB = str(_Path(__file__).resolve().parent.parent / "lib")
+if _LIB not in _sys.path:
+    _sys.path.insert(0, _LIB)
 
 import re
 from json import dumps, loads, JSONDecodeError
@@ -21,7 +27,8 @@ from pathlib import Path
 from typing import Any, Optional
 
 import typer
-from rich import print
+
+from _envelope import emit, fail  # noqa: E402
 
 
 _TOKEN = re.compile(r"\.([^.\[\]]+)|\[(\d+)\]")
@@ -47,6 +54,17 @@ def walk_path(data: Any, path: str) -> Any:
     return current
 
 
+def _human_value(data: Any, _meta: dict) -> None:
+    if isinstance(data, (dict, list)):
+        print(dumps(data, indent=2, ensure_ascii=False))
+    else:
+        print(data)
+
+
+def _human_minified(data: Any, _meta: dict) -> None:
+    print(dumps(data, separators=(",", ":"), ensure_ascii=False))
+
+
 def main(
     path: Path = typer.Argument(help="Path to JSON file"),
     pretty: bool = typer.Option(True, "--pretty/--minify", help="Pretty-print or minify output"),
@@ -60,40 +78,43 @@ def main(
     """
 
     if not path.is_file():
-        print(f"Can't find {path} — did you typo it?")
-        raise typer.Exit(1)
+        fail(
+            f"file not found: {path}",
+            why="path does not exist or is not a regular file",
+            hint="check the path; or pipe the JSON in and write to a temp file first",
+        )
 
     raw = path.read_text(encoding="utf-8")
 
     try:
         data = loads(raw)
     except JSONDecodeError as e:
-        if validate:
-            print(f"Invalid JSON at line {e.lineno}, column {e.colno}: {e.msg}")
-            raise typer.Exit(1)
-        print(f"Couldn't parse {path}: {e.msg} (line {e.lineno}, col {e.colno})")
-        raise typer.Exit(1)
+        fail(
+            f"invalid JSON in {path}",
+            why=f"{e.msg} at line {e.lineno}, column {e.colno}",
+            hint="fix the syntax error, then re-run; --validate just reports parse status",
+        )
 
     if validate:
-        print("OK")
+        emit({"valid": True}, {"path": str(path)})
         return
 
     if extract is not None:
         try:
             value = walk_path(data, extract)
         except (KeyError, IndexError, TypeError) as e:
-            print(f"Path {extract} didn't lead anywhere: {e}")
-            raise typer.Exit(1)
-        if isinstance(value, (dict, list)):
-            print(dumps(value, indent=2 if pretty else None, ensure_ascii=False))
-        else:
-            print(value)
+            fail(
+                f"path didn't lead anywhere: {extract}",
+                why=str(e),
+                hint=f"run `utils json {path}` (no --extract) to see the actual shape",
+            )
+        emit(value, {"path": str(path), "extract": extract}, human=_human_value)
         return
 
     if pretty:
-        print(dumps(data, indent=2, ensure_ascii=False))
+        emit(data, {"path": str(path), "format": "pretty"}, human=_human_value)
     else:
-        print(dumps(data, separators=(",", ":"), ensure_ascii=False))
+        emit(data, {"path": str(path), "format": "minified"}, human=_human_minified)
 
 
 if __name__ == "__main__":

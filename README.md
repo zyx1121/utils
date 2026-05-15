@@ -63,6 +63,28 @@ Bash or AppleScript also work — anything with a shebang and exec bit. The disp
 
 The README doesn't enumerate commands — that list grows. `utils --list` is authoritative.
 
+## Output contract
+
+Scripts emit a JSON envelope on stdout when piped or redirected, and a human-friendly view when stdout is a terminal — toggle is automatic, no `--json` flag.
+
+```bash
+$ utils ssl-check github.com | jq -r .data.days_remaining
+79
+```
+
+The envelope shape is fixed:
+
+```jsonc
+// success
+{"success": true,  "data": <value>, "metadata": {...}}
+// failure (exit code non-zero)
+{"success": false, "error": {"message": "...", "why": "...", "hint": "..."}}
+```
+
+`data` is whatever the command produced; `metadata` carries provenance bits an agent might branch on (source path, format flag, etc). On failure, `error` gives three fields — `message` for what broke, `why` for the underlying cause, `hint` for what to try next. Errors are documentation: agents read them before they read `--help`.
+
+Shared helpers live in [`lib/_envelope.py`](lib/_envelope.py) — `emit`, `fail`, `parse_host`. Every Python script imports them; see [`scripts/ssl-check.py`](scripts/ssl-check.py) for the canonical shape and [`agents/utils-promoter.md`](agents/utils-promoter.md) for the import shim new scripts must use.
+
 ## Per-command setup
 
 A few commands need a one-time macOS-side tweak before they work:
@@ -113,6 +135,8 @@ bin/
 hooks/
 ├── hooks.json                  PostToolUse(Write|Bash) → observe.py
 └── observe.py                  append-only jsonl logger
+lib/
+└── _envelope.py                shared output helpers — emit / fail / parse_host
 skills/
 ├── keynote/SKILL.md            Keynote 簡報 building blocks (AppleScript-based)
 ├── morning/SKILL.md            /utils:morning — daily briefing from chronicle / TODO / calendar / mail
