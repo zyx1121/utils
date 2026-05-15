@@ -142,11 +142,16 @@ skills/
 ├── keynote-style/SKILL.md      Loki's deck style guide — cover/outline/content rules + Chinese speaker notes
 ├── morning/SKILL.md            /utils:morning — daily briefing from chronicle / TODO / calendar / mail
 ├── post/SKILL.md               /utils:post — idea → ~1500-word blog → private gist
+├── pve/SKILL.md                PVE / gateway atoms — wraps utils pve subcommands
 ├── skills-review/SKILL.md      /skills:review — lint Claude Code skills for staleness
 ├── utils/SKILL.md              "before writing a script, try `utils <cmd>` first"
 └── utils-review/SKILL.md       /utils:review — find candidates
 agents/
+├── pve-provisioner.md          one-shot VM provisioning: clone + DNS + forward + Caddy + smoke test
 └── utils-promoter.md           candidate → scripts/<name>.<ext> → PR
+monitors/
+├── monitors.json               background monitor configs (per-plugin)
+└── pve-vm-state.sh             notify on PVE VM state transitions (silent until something changes)
 scripts/
 └── *                           each one self-contained, exec bit + shebang
                                 (.py PEP 723, .sh, .applescript, ...)
