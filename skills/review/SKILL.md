@@ -1,5 +1,5 @@
 ---
-name: utils-review
+name: review
 description: Review the utils observation log to surface candidates for new scripts in zyx1121/utils or fixes to existing ones. Use when the user runs `/utils:review` or asks "any new utils candidates?", "what should utils learn next?", "review my utils log", or similar. Reads `~/.claude/data/utils/observations.jsonl`, clusters repeated ad-hoc scripts, flags failing utils-script invocations, presents a candidate table, and hands approved candidates to the `utils-promoter` agent.
 ---
 

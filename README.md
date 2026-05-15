@@ -145,7 +145,7 @@ skills/
 ├── pve/SKILL.md                PVE / gateway atoms — wraps utils pve subcommands
 ├── skills-review/SKILL.md      /skills:review — lint Claude Code skills for staleness
 ├── utils/SKILL.md              "before writing a script, try `utils <cmd>` first"
-└── utils-review/SKILL.md       /utils:review — find candidates
+└── review/SKILL.md             /utils:review — find candidates
 agents/
 ├── pve-provisioner.md          one-shot VM provisioning: clone + DNS + forward + Caddy + smoke test
 └── utils-promoter.md           candidate → scripts/<name>.<ext> → PR
