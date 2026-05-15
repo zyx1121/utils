@@ -114,6 +114,10 @@ hooks/
 ├── hooks.json                  PostToolUse(Write|Bash) → observe.py
 └── observe.py                  append-only jsonl logger
 skills/
+├── keynote/SKILL.md            Keynote 簡報 building blocks (AppleScript-based)
+├── morning/SKILL.md            /utils:morning — daily briefing from chronicle / TODO / calendar / mail
+├── post/SKILL.md               /utils:post — idea → ~1500-word blog → private gist
+├── skills-review/SKILL.md      /skills:review — lint Claude Code skills for staleness
 ├── utils/SKILL.md              "before writing a script, try `utils <cmd>` first"
 └── utils-review/SKILL.md       /utils:review — find candidates
 agents/
