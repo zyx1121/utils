@@ -5,7 +5,7 @@ description: Compose Keynote presentations with the `utils keynote` building blo
 
 # keynote — slide-deck workflows over `utils keynote`
 
-The plugin ships a `keynote` script with 13 atomic AppleScript ops against Keynote.app. This skill composes them into full slide-deck workflows.
+The plugin ships a `keynote` script with 15 atomic AppleScript ops against Keynote.app. This skill composes them into full slide-deck workflows.
 
 ## Building blocks
 
@@ -36,6 +36,8 @@ utils keynote list-shapes    --slide N                    # discover shape indic
 
 # Content
 utils keynote add-image --slide N --image PATH [--x N --y N --w N --h N]
+utils keynote add-table --slide N --rows R --cols C [--data CSV] [--x N --y N --w N --h N]
+utils keynote set-cell  --slide N --row R --col C <text> [--table M]    # M defaults to 1
 
 # Export
 utils keynote export --pdf PATH       # or --pptx PATH
@@ -78,6 +80,20 @@ For pptx-only templates: same flow — `--save-to` accepts a `.key` destination.
 
 **Do not** use `open <template>` followed by `save <new-path>` as a substitute. Keynote's `save in <path>` is export-only: it writes a copy but does NOT rebind the document, so every autosave between the `open` and the manual `save` lands on the original template (memory: `feedback_keynote_autosave_persists`).
 
+### Tables
+
+```bash
+# Seed a whole grid in one call (CSV-style: rows split by \n, cols by ,):
+utils keynote add-table --slide 3 --rows 3 --cols 3 \
+  --data "Name,Role,Year\nLoki,SWE,2026\nAlpha,PM,2025" \
+  --x 100 --y 200
+
+# Edit cells afterwards (--table defaults to 1; row/col are 1-based):
+utils keynote set-cell --slide 3 --row 2 --col 2 "Lead SWE"
+```
+
+`--data` has no CSV quoting — if a cell needs an embedded comma or line break (`\n`), drop `--data` and fill that cell with `set-cell` instead. Table styling (cell fonts, header band, alignment) follows the slide theme's table style; Keynote's AppleScript dictionary doesn't expose those, so format in Keynote.app.
+
 ### Edit existing
 
 ```bash
@@ -108,6 +124,7 @@ utils keynote export --pptx ~/Desktop/deck.pptx    # non-Keynote audience
 ## Known limits
 
 - No `format-text` (font / size / color), `set-bullets`, or paragraph-indent levels — Keynote's AppleScript dictionary is sparse here. Adjust those in Keynote.app, or render to image and use `add-image`.
+- **Tables: only structure + cell values.** `add-table` and `set-cell` cover row/column count, position/size, and text per cell. Cell fonts, alignment, header-row styling, merged cells, and column widths all need Keynote.app GUI — pick a theme with a table style you like before generating.
 - `add-slide` only appends at end. Reorder via Keynote.app GUI.
 - **`save <path>` is export-only, not save-as.** Keynote's `save front document in POSIX file <path>` writes a copy at `<path>` but does NOT change `file of front document` — the doc remains bound to its original file, and subsequent autosaves keep writing there. To start from a template safely, use `open <src> --save-to <dst>` (filesystem-copy then open, so the doc is bound to `<dst>` from the start).
 - **Can't rename slide layouts (master slides).** The `name` property is `access="r"` in Keynote's AppleScript dictionary; every rename attempt errors with -10006. To clean up imported PPT layout names (e.g. `8_標題投影片_1` → `Title`): open in Keynote.app, **View → Edit Master Slides**, right-click a master → **Rename Slide**. The only programmatic path is editing the `.iwa` protobufs inside the `.key` Zip via `keynote-parser` (heavy, not exposed by `utils keynote`).

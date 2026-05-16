@@ -534,6 +534,109 @@ end tell
     console.print(f"added image to slide [cyan]{slide}[/]: {abs_img}")
 
 
+# ── add-table ────────────────────────────────────────────────────
+@app.command(
+    name="add-table",
+    help=(
+        "Add a table to a slide. Optionally seed cells with --data "
+        '(rows split by \\n, cols by comma — e.g. "a,b,c\\nd,e,f"). '
+        "No CSV quoting: for cells containing commas, omit --data and "
+        "use set-cell afterwards."
+    ),
+)
+def add_table(
+    slide: int = typer.Option(..., "--slide", "-s", help="Slide number (1-based)"),
+    rows: int = typer.Option(..., "--rows", "-r", help="Number of rows"),
+    cols: int = typer.Option(..., "--cols", "-c", help="Number of columns"),
+    data: Optional[str] = typer.Option(
+        None,
+        "--data",
+        help='CSV-style seed data, e.g. "Header1,Header2\\nVal1,Val2". Cells extra to rows×cols are ignored.',
+    ),
+    x: Optional[int] = typer.Option(None, "--x", help="Left position in points"),
+    y: Optional[int] = typer.Option(None, "--y", help="Top position in points"),
+    width: Optional[int] = typer.Option(None, "--w", help="Width in points"),
+    height: Optional[int] = typer.Option(None, "--h", help="Height in points"),
+):
+    if rows < 1 or cols < 1:
+        err.print("keynote: --rows and --cols must be >= 1")
+        raise typer.Exit(2)
+
+    parts = [
+        f"make new table with properties {{row count:{rows}, column count:{cols}}}",
+        # Keynote needs a beat after `make new table` before cells are
+        # addressable — otherwise cell-set raises -1719 ("Invalid index").
+        "delay 0.3",
+        "set tableIdx to count of tables",
+    ]
+    if x is not None and y is not None:
+        parts.append(f"set position of table tableIdx to {{{x}, {y}}}")
+    if width is not None:
+        parts.append(f"set width of table tableIdx to {width}")
+    if height is not None:
+        parts.append(f"set height of table tableIdx to {height}")
+
+    if data:
+        normalized = data.replace("\\n", "\n")
+        grid = [row.split(",") for row in normalized.split("\n")]
+        for r_idx, row_cells in enumerate(grid, start=1):
+            if r_idx > rows:
+                break
+            for c_idx, cell_text in enumerate(row_cells, start=1):
+                if c_idx > cols:
+                    break
+                escaped = escape_as(cell_text)
+                parts.append(
+                    f'set value of cell {c_idx} of row {r_idx} of table tableIdx to "{escaped}"'
+                )
+
+    parts.append("return tableIdx as string")
+    body = "\n        ".join(parts)
+    script = f'''
+tell application "Keynote"
+    tell front document
+        tell slide {slide}
+            {body}
+        end tell
+    end tell
+end tell
+'''
+    table_index = run_as(script)
+    console.print(
+        f"added table [cyan]{table_index}[/] to slide [cyan]{slide}[/] ([cyan]{rows}[/]×[cyan]{cols}[/])"
+    )
+
+
+# ── set-cell ─────────────────────────────────────────────────────
+@app.command(
+    name="set-cell",
+    help=(
+        "Set the value of one cell in a table. Use \\n for line breaks "
+        "within the cell. Default --table is 1 (slides usually have one)."
+    ),
+)
+def set_cell(
+    slide: int = typer.Option(..., "--slide", "-s", help="Slide number (1-based)"),
+    row: int = typer.Option(..., "--row", "-r", help="Row (1-based)"),
+    col: int = typer.Option(..., "--col", "-c", help="Column (1-based)"),
+    text: str = typer.Argument(..., help="Cell text. Use \\n for line breaks."),
+    table: int = typer.Option(1, "--table", "-t", help="Table index on the slide (1-based, default 1)"),
+):
+    script = f'''
+tell application "Keynote"
+    tell front document
+        tell slide {slide}
+            set value of cell {col} of row {row} of table {table} to "{prepare_text(text)}"
+        end tell
+    end tell
+end tell
+'''
+    run_as(script)
+    console.print(
+        f"slide [cyan]{slide}[/] table [cyan]{table}[/] cell ([cyan]{row}[/],[cyan]{col}[/]) set"
+    )
+
+
 # ── preview ──────────────────────────────────────────────────────
 @app.command(help="Export to /tmp/keynote-preview.pdf for visual inspection.")
 def preview():
