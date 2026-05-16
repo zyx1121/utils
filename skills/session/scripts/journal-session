@@ -1,0 +1,287 @@
+#!/usr/bin/env python3
+"""
+journal-session [<session-id>]
+
+Gather data for a single Claude Code session by reading its transcript jsonl
+directly from ~/.claude/projects/*/<session-id>.jsonl. No events-log dependency.
+
+Default (no arg): the most recently active transcript.
+With UUID arg: that session.
+
+Outputs JSON on stdout — same shape family as journal-collect, scoped to one session.
+
+Stdlib only.
+"""
+from __future__ import annotations
+
+import json
+import re
+import subprocess
+import sys
+from collections import Counter
+from datetime import datetime
+from pathlib import Path
+
+
+HOME = Path.home()
+PROJECTS = HOME / ".claude" / "projects"
+
+UUID_RE = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+    re.IGNORECASE,
+)
+
+
+def is_interactive(path: Path) -> bool:
+    """True if the first user message has entrypoint='cli' (interactive TUI).
+    Filters out sdk-cli programmatic invocations / sub-agents."""
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    d = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if d.get("type") == "user":
+                    return d.get("entrypoint") == "cli"
+    except OSError:
+        return False
+    return False
+
+
+def find_latest_transcript() -> Path | None:
+    """Most recently active interactive (cli) transcript across all project dirs."""
+    if not PROJECTS.exists():
+        return None
+    candidates = []
+    for proj in PROJECTS.iterdir():
+        if not proj.is_dir():
+            continue
+        for jsonl in proj.glob("*.jsonl"):
+            try:
+                candidates.append((jsonl.stat().st_mtime, jsonl))
+            except OSError:
+                continue
+    candidates.sort(key=lambda x: -x[0])
+    for _, path in candidates:
+        if is_interactive(path):
+            return path
+    return None
+
+
+def find_transcript(session_id: str) -> Path | None:
+    if not PROJECTS.exists():
+        return None
+    for path in PROJECTS.glob(f"*/{session_id}.jsonl"):
+        if path.is_file():
+            return path
+    return None
+
+
+def extract_user_text(d: dict) -> str | None:
+    msg = d.get("message")
+    content = msg.get("content") if isinstance(msg, dict) else None
+    if content is None:
+        content = d.get("content")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "text":
+                return block.get("text", "")
+            if isinstance(block, str):
+                return block
+    return None
+
+
+def mine_transcript(path: Path) -> dict:
+    """Walk one transcript and pull all signals."""
+    tool_counts: Counter[str] = Counter()
+    files_edited: set[str] = set()
+    bash_commands: list[str] = []
+    ai_title: str | None = None
+    cwd_counts: Counter[str] = Counter()
+    branch_counts: Counter[str] = Counter()
+    prompts: list[dict] = []
+    first_ts: str | None = None
+    last_ts: str | None = None
+
+    try:
+        f = open(path, encoding="utf-8", errors="replace")
+    except OSError:
+        return {}
+
+    with f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                d = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+
+            ts = d.get("timestamp")
+            if ts:
+                if first_ts is None:
+                    first_ts = ts
+                last_ts = ts
+
+            if d.get("cwd"):
+                cwd_counts[d["cwd"]] += 1
+            if d.get("gitBranch"):
+                branch_counts[d["gitBranch"]] += 1
+
+            t = d.get("type")
+            if t == "ai-title":
+                ai_title = d.get("aiTitle") or d.get("title") or ai_title
+            elif t == "user" and d.get("userType") == "external" and not d.get("isSidechain"):
+                text = extract_user_text(d)
+                if text:
+                    prompts.append({"ts": ts, "text": text[:500]})
+            elif t == "file-history-snapshot":
+                snap = d.get("snapshot") or {}
+                if isinstance(snap, dict):
+                    for b in snap.get("trackedFileBackups", []) or []:
+                        if isinstance(b, str):
+                            files_edited.add(b)
+                        elif isinstance(b, dict):
+                            p = b.get("path") or b.get("file") or b.get("filePath")
+                            if p:
+                                files_edited.add(p)
+            elif t == "assistant":
+                msg = d.get("message", {})
+                if isinstance(msg, dict):
+                    content = msg.get("content")
+                    if isinstance(content, list):
+                        for block in content:
+                            if isinstance(block, dict) and block.get("type") == "tool_use":
+                                name = block.get("name", "?")
+                                tool_counts[name] += 1
+                                if name == "Bash":
+                                    cmd = (block.get("input", {}) or {}).get("command", "")
+                                    if cmd:
+                                        bash_commands.append(cmd[:200])
+                                elif name in ("Edit", "Write"):
+                                    fp = (block.get("input", {}) or {}).get("file_path", "")
+                                    if fp:
+                                        files_edited.add(fp)
+
+    return {
+        "first_ts": first_ts,
+        "last_ts": last_ts,
+        "ai_title": ai_title,
+        "tool_counts": dict(tool_counts),
+        "files_edited": sorted(files_edited),
+        "bash_commands_sample": bash_commands[:15],
+        "cwd": cwd_counts.most_common(1)[0][0] if cwd_counts else None,
+        "git_branch": branch_counts.most_common(1)[0][0] if branch_counts else None,
+        "prompts": prompts,
+    }
+
+
+def gather_git_for_session(start_ts: str, end_ts: str, cwd: str | None) -> list[dict]:
+    repos: list[dict] = []
+    candidates = []
+    if cwd:
+        p = Path(cwd)
+        while p != p.parent:
+            if (p / ".git").exists():
+                candidates.append(p)
+                break
+            p = p.parent
+    if not candidates:
+        try:
+            for entry in sorted(HOME.iterdir()):
+                if entry.is_dir() and not entry.name.startswith(".") and (entry / ".git").exists():
+                    candidates.append(entry)
+        except OSError:
+            pass
+
+    for repo in candidates:
+        try:
+            out = subprocess.run(
+                [
+                    "git", "-C", str(repo), "log",
+                    f"--since={start_ts}",
+                    f"--until={end_ts}",
+                    "--pretty=format:%H|%aI|%s",
+                    "--no-merges",
+                ],
+                capture_output=True, text=True, timeout=3,
+            )
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            continue
+        commits = []
+        for line in out.stdout.splitlines():
+            parts = line.split("|", 2)
+            if len(parts) == 3:
+                sha, dt, msg = parts
+                commits.append({"sha": sha[:7], "date": dt, "msg": msg})
+        if commits:
+            repos.append({"repo": repo.name, "commits": commits})
+    return repos
+
+
+def main() -> int:
+    args = sys.argv[1:]
+
+    if args:
+        session_id = args[0]
+        if not UUID_RE.match(session_id):
+            print(f"not a UUID: {session_id}", file=sys.stderr)
+            return 2
+        transcript = find_transcript(session_id)
+    else:
+        transcript = find_latest_transcript()
+        if not transcript:
+            print("no transcripts found in ~/.claude/projects/", file=sys.stderr)
+            return 1
+        session_id = transcript.stem
+
+    if not transcript:
+        print(f"no transcript found for session {session_id}", file=sys.stderr)
+        return 1
+
+    data = mine_transcript(transcript)
+    if not data:
+        print(f"could not read transcript for session {session_id}", file=sys.stderr)
+        return 1
+
+    first_ts = data.get("first_ts")
+    last_ts = data.get("last_ts")
+    cwd = data.get("cwd")
+    prompts = data.get("prompts", [])
+
+    git = gather_git_for_session(first_ts, last_ts, cwd) if first_ts and last_ts else []
+
+    payload = {
+        "session_id": session_id,
+        "first_ts": first_ts,
+        "last_ts": last_ts,
+        "cwd": cwd,
+        "git_branch": data.get("git_branch"),
+        "ai_title": data.get("ai_title"),
+        "transcript_path": str(transcript),
+        "totals": {
+            "prompts": len(prompts),
+            "tool_calls": sum(data.get("tool_counts", {}).values()),
+            "files_edited": len(data.get("files_edited", [])),
+            "git_commits": sum(len(r["commits"]) for r in git),
+        },
+        "tool_counts": data.get("tool_counts", {}),
+        "files_edited": data.get("files_edited", []),
+        "bash_commands_sample": data.get("bash_commands_sample", []),
+        "prompts": prompts,
+        "git": git,
+    }
+    json.dump(payload, sys.stdout, ensure_ascii=False, indent=2)
+    sys.stdout.write("\n")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

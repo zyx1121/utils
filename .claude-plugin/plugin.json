@@ -1,7 +1,7 @@
 {
   "name": "utils",
-  "version": "0.7.0",
-  "description": "Agent-first CLI toolbox. Hooks watch ad-hoc scripts, propose new ones when patterns repeat. Each command is one self-contained PEP 723 script.",
+  "version": "0.8.0",
+  "description": "Agent-first CLI toolbox. Hooks watch ad-hoc scripts, propose new ones when patterns repeat. Each command is one self-contained PEP 723 script. Now bundles journal skills (daily/weekly/session reports).",
   "author": {
     "name": "Loki",
     "email": "yongxiang.zhan@outlook.com"
@@ -9,5 +9,5 @@
   "homepage": "https://github.com/zyx1121/utils",
   "repository": "https://github.com/zyx1121/utils",
   "license": "MIT",
-  "keywords": ["cli", "toolbox", "lifecycle", "self-growing", "agent-first", "pep-723"]
+  "keywords": ["cli", "toolbox", "lifecycle", "self-growing", "agent-first", "pep-723", "journal", "observability", "daily-report"]
 }

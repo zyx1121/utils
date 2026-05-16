@@ -1,0 +1,131 @@
+#!/bin/bash
+# journal-install-cron — install local launchd jobs for daily/weekly journal reports.
+# macOS only. Idempotent (bootout existing then bootstrap).
+#
+# Schedule:
+#   daily:  every day @ 23:00
+#   weekly: Sunday @ 22:00
+#
+# Each job runs `claude --print "/utils:<period>"` in $HOME.
+
+set -euo pipefail
+
+PLUGIN_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+LAUNCH_AGENTS="${HOME}/Library/LaunchAgents"
+DATA_DIR="${HOME}/.claude/data/utils/journal"
+
+mkdir -p "$LAUNCH_AGENTS" "$DATA_DIR"
+
+# Find the real claude binary (not shell alias)
+CLAUDE_BIN=""
+for candidate in \
+  "${HOME}/.local/bin/claude" \
+  "/opt/homebrew/bin/claude" \
+  "/usr/local/bin/claude"; do
+  if [[ -x "$candidate" ]]; then
+    CLAUDE_BIN="$candidate"
+    break
+  fi
+done
+
+if [[ -z "$CLAUDE_BIN" ]]; then
+  echo "✗ can't find claude binary. install Claude Code first." >&2
+  exit 1
+fi
+
+echo "→ using claude binary: $CLAUDE_BIN"
+
+write_plist() {
+  local period="$1"      # daily | weekly
+  local hour="$2"
+  local minute="$3"
+  local weekday="$4"     # empty for daily, "7" for Sunday (launchd: 0|7 both = Sun, 7 is safer)
+  local label="tw.zyx.utils.journal.${period}"
+  local plist="${LAUNCH_AGENTS}/${label}.plist"
+
+  local cal_block="    <key>Hour</key>
+    <integer>${hour}</integer>
+    <key>Minute</key>
+    <integer>${minute}</integer>"
+  if [[ -n "$weekday" ]]; then
+    cal_block="${cal_block}
+    <key>Weekday</key>
+    <integer>${weekday}</integer>"
+  fi
+
+  # TODO(security): cron runs claude with --dangerously-skip-permissions because
+  # automated runs can't approve tool prompts. Collapse target: define journal-
+  # specific settings.json scope so cron only gets Read/Write on
+  # ~/.claude/data/utils/journal/** and Bash on journal-collect. Revisit when
+  # monthly/quarterly reports ship (roughly 2 weeks of MVP data).
+  cat > "$plist" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>${label}</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>${CLAUDE_BIN}</string>
+    <string>--dangerously-skip-permissions</string>
+    <string>--print</string>
+    <string>/utils:${period}</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>${HOME}</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:${HOME}/.local/bin</string>
+    <key>HOME</key>
+    <string>${HOME}</string>
+  </dict>
+  <key>StartCalendarInterval</key>
+  <dict>
+${cal_block}
+  </dict>
+  <key>WakeSystem</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>${DATA_DIR}/cron-${period}.log</string>
+  <key>StandardErrorPath</key>
+  <string>${DATA_DIR}/cron-${period}.err</string>
+  <key>ProcessType</key>
+  <string>Background</string>
+</dict>
+</plist>
+EOF
+  echo "→ wrote $plist"
+}
+
+write_plist daily  23 0 ""
+write_plist weekly 22 0 "7"
+
+# Bootstrap (idempotent)
+GUI_DOMAIN="gui/$(id -u)"
+for label in tw.zyx.utils.journal.daily tw.zyx.utils.journal.weekly; do
+  launchctl bootout "${GUI_DOMAIN}/${label}" 2>/dev/null || true
+  launchctl bootstrap "${GUI_DOMAIN}" "${LAUNCH_AGENTS}/${label}.plist"
+  echo "✓ loaded ${label}"
+done
+
+cat <<EOF
+
+✓ journal cron installed.
+
+  daily:  every day @ 23:00 → /utils:daily
+  weekly: Sunday    @ 22:00 → /utils:weekly
+
+both jobs have WakeSystem=true — Mac will wake from sleep to run them.
+(reliable on AC power; on battery with extended sleep, macOS may defer the
+wake to save power. /utils:catchup covers the missed cases.)
+
+inspect:  launchctl list | grep journal
+logs:     tail -f ${DATA_DIR}/cron-daily.log
+remove:   launchctl bootout ${GUI_DOMAIN}/tw.zyx.utils.journal.daily ${GUI_DOMAIN}/tw.zyx.utils.journal.weekly
+
+note: cron runs claude with --dangerously-skip-permissions, since automated runs
+      can't approve tool prompts. The plugin only needs Read/Write/Bash on local
+      paths — review hooks/ and scripts/ if you'd rather hand-curate permissions.
+EOF

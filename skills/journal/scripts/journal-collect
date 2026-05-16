@@ -1,0 +1,278 @@
+#!/usr/bin/env python3
+"""
+journal-collect <YYYY-MM-DD> [<YYYY-MM-DD>]
+
+Aggregate Claude Code activity for a date range by scanning the native
+transcript jsonl files at ~/.claude/projects/*/*.jsonl. Output JSON on stdout.
+Used by /utils:daily, /utils:weekly, /utils:stats.
+
+Stdlib only.
+"""
+from __future__ import annotations
+
+import json
+import subprocess
+import sys
+from collections import Counter, defaultdict
+from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
+
+
+HOME = Path.home()
+PROJECTS = HOME / ".claude" / "projects"
+MAX_REPOS = 60
+
+
+def parse_date(s: str) -> date:
+    return datetime.strptime(s, "%Y-%m-%d").date()
+
+
+def parse_ts(ts: str | None) -> datetime | None:
+    if not ts:
+        return None
+    try:
+        return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def file_meta(path: Path) -> tuple[datetime | None, datetime | None, str | None]:
+    """Return (first_ts, last_ts, entrypoint) of a transcript jsonl.
+
+    `entrypoint` is read from the first user message — distinguishes
+    'cli' (interactive TUI) from 'sdk-cli' (claude -p invocations, sub-agents,
+    spawned workers). The hook-storm in the morning of 2026-05-16 created
+    ~20k sdk-cli sessions; collect drops those so daily/weekly don't drown.
+    """
+    first = last = None
+    entrypoint: str | None = None
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    d = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                ts = d.get("timestamp")
+                if ts:
+                    if first is None:
+                        first = ts
+                    last = ts
+                if entrypoint is None and d.get("type") == "user":
+                    ep = d.get("entrypoint")
+                    if ep:
+                        entrypoint = ep
+    except OSError:
+        return None, None, None
+    return parse_ts(first), parse_ts(last), entrypoint
+
+
+def scan_session(path: Path) -> dict:
+    """Walk one transcript, aggregate session-level fields."""
+    sid = path.stem
+    out: dict = {
+        "id": sid,
+        "first_ts": None,
+        "last_ts": None,
+        "cwd": None,
+        "git_branch": None,
+        "prompts": 0,
+        "transcript_path": str(path),
+    }
+    prompts: list[dict] = []
+    try:
+        f = open(path, encoding="utf-8", errors="replace")
+    except OSError:
+        return {**out, "_prompts": prompts}
+    with f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                d = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            ts = d.get("timestamp")
+            if ts:
+                if out["first_ts"] is None:
+                    out["first_ts"] = ts
+                out["last_ts"] = ts
+            if not out["cwd"] and d.get("cwd"):
+                out["cwd"] = d["cwd"]
+            if not out["git_branch"] and d.get("gitBranch"):
+                out["git_branch"] = d["gitBranch"]
+            # Real user prompts only — exclude tool results / sidechain sub-agents
+            if (
+                d.get("type") == "user"
+                and d.get("userType") == "external"
+                and not d.get("isSidechain")
+            ):
+                out["prompts"] += 1
+                text = extract_user_text(d)
+                if text:
+                    prompts.append(
+                        {
+                            "ts": ts,
+                            "cwd": d.get("cwd"),
+                            "text": text[:500],
+                        }
+                    )
+    return {**out, "_prompts": prompts}
+
+
+def extract_user_text(d: dict) -> str | None:
+    """Pull the user-typed text out of a user-type event, robust to shape variants."""
+    msg = d.get("message")
+    content = msg.get("content") if isinstance(msg, dict) else None
+    if content is None:
+        content = d.get("content")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "text":
+                return block.get("text", "")
+            if isinstance(block, str):
+                return block
+    return None
+
+
+def iter_session_files(start: date, end: date):
+    """Yield Path for each transcript jsonl that overlaps [start, end]."""
+    if not PROJECTS.exists():
+        return
+    start_dt = datetime.combine(start, datetime.min.time(), tzinfo=timezone.utc)
+    end_dt = datetime.combine(end + timedelta(days=1), datetime.min.time(), tzinfo=timezone.utc)
+    # Mtime filter is cheap; allow generous slack (sessions can span days)
+    mtime_floor = (start_dt - timedelta(days=1)).timestamp()
+    for proj in PROJECTS.iterdir():
+        if not proj.is_dir():
+            continue
+        for jsonl in proj.glob("*.jsonl"):
+            try:
+                st = jsonl.stat()
+            except OSError:
+                continue
+            if st.st_mtime < mtime_floor:
+                continue
+            first_ts, last_ts, entrypoint = file_meta(jsonl)
+            if first_ts is None or last_ts is None:
+                continue
+            if entrypoint == "sdk-cli":
+                # programmatic invocations, sub-agents, spawned workers — not user sessions
+                continue
+            if last_ts < start_dt or first_ts >= end_dt:
+                continue
+            yield jsonl
+
+
+def gather_git(start: date, end: date) -> list[dict]:
+    """Scan ~/ depth-1 for git repos, collect commits in [start, end]."""
+    repos: list[dict] = []
+    try:
+        entries = sorted(HOME.iterdir())
+    except OSError:
+        return repos
+    scanned = 0
+    for entry in entries:
+        if scanned >= MAX_REPOS:
+            break
+        if not entry.is_dir() or entry.name.startswith("."):
+            continue
+        if not (entry / ".git").exists():
+            continue
+        scanned += 1
+        try:
+            out = subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    str(entry),
+                    "log",
+                    f"--since={start.isoformat()} 00:00:00",
+                    f"--until={(end + timedelta(days=1)).isoformat()} 00:00:00",
+                    "--pretty=format:%H|%an|%ae|%aI|%s",
+                    "--no-merges",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=3,
+            )
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            continue
+        commits = []
+        for line in out.stdout.splitlines():
+            parts = line.split("|", 4)
+            if len(parts) == 5:
+                sha, an, ae, dt, msg = parts
+                commits.append(
+                    {
+                        "sha": sha[:7],
+                        "author_name": an,
+                        "author_email": ae,
+                        "date": dt,
+                        "msg": msg,
+                    }
+                )
+        if commits:
+            repos.append({"repo": entry.name, "commits": commits})
+    return repos
+
+
+def cwd_distribution(sessions: list[dict]) -> dict[str, int]:
+    dist: dict[str, int] = defaultdict(int)
+    for s in sessions:
+        if s.get("cwd"):
+            dist[s["cwd"]] += 1
+    return dict(sorted(dist.items(), key=lambda kv: -kv[1]))
+
+
+def main() -> int:
+    args = sys.argv[1:]
+    if not args:
+        print(
+            "usage: journal-collect <YYYY-MM-DD> [<YYYY-MM-DD>]",
+            file=sys.stderr,
+        )
+        return 2
+    try:
+        start = parse_date(args[0])
+        end = parse_date(args[1]) if len(args) > 1 else start
+    except ValueError as e:
+        print(f"bad date: {e}", file=sys.stderr)
+        return 2
+
+    sessions: list[dict] = []
+    prompts: list[dict] = []
+    for path in iter_session_files(start, end):
+        s = scan_session(path)
+        prompts.extend(s.pop("_prompts", []))
+        sessions.append(s)
+    sessions.sort(key=lambda s: s.get("first_ts") or "")
+    prompts.sort(key=lambda p: p.get("ts") or "")
+    git = gather_git(start, end)
+
+    payload = {
+        "range": {"start": start.isoformat(), "end": end.isoformat()},
+        "totals": {
+            "sessions": len(sessions),
+            "prompts": sum(s["prompts"] for s in sessions),
+            "git_repos_touched": len(git),
+            "git_commits": sum(len(r["commits"]) for r in git),
+        },
+        "sessions": sessions,
+        "cwd_distribution": cwd_distribution(sessions),
+        "prompts": prompts,
+        "git": git,
+    }
+    json.dump(payload, sys.stdout, ensure_ascii=False, indent=2)
+    sys.stdout.write("\n")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
