@@ -16,6 +16,7 @@ import sys as _sys
 from pathlib import Path as _Path
 _sys.path[:] = [p for p in _sys.path if _Path(p).resolve() != _Path(__file__).resolve().parent]
 
+import json
 import shutil
 import subprocess
 from pathlib import Path
@@ -312,6 +313,48 @@ end tell
     console.print(f"slide [cyan]{slide}[/] notes set")
 
 
+# ── get-slide ────────────────────────────────────────────────────
+@app.command(
+    name="get-slide",
+    help=(
+        "Read title / default body / presenter notes of a slide. "
+        "Outputs JSON with keys: slide, title, body, notes. CR / CRLF are "
+        "normalized to LF so the values are clean to embed in agent prompts."
+    ),
+)
+def get_slide(
+    slide: int = typer.Option(..., "--slide", "-s", help="Slide number (1-based)"),
+):
+    script = f'''
+tell application "Keynote"
+    tell front document
+        tell slide {slide}
+            set t to ""
+            try
+                set t to (object text of default title item) as text
+            end try
+            set b to ""
+            try
+                set b to (object text of default body item) as text
+            end try
+            set n to ""
+            try
+                set n to (presenter notes) as text
+            end try
+            return t & "<<<F>>>" & b & "<<<F>>>" & n
+        end tell
+    end tell
+end tell
+'''
+    raw = run_as(script)
+    parts = raw.split("<<<F>>>", 2)
+    while len(parts) < 3:
+        parts.append("")
+    title, body, notes = (p.replace("\r\n", "\n").replace("\r", "\n") for p in parts)
+    payload = {"slide": slide, "title": title, "body": body, "notes": notes}
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
+
+
 # ── list-shapes ──────────────────────────────────────────────────
 @app.command(name="list-shapes", help="List all shapes (iWork items) on a slide, with kind and current text. Use to find indices for set-shape-text on layouts beyond default title/body.")
 def list_shapes(slide: int = typer.Option(..., "--slide", "-s", help="Slide number (1-based)")):
@@ -368,6 +411,59 @@ end tell
 '''
     run_as(script)
     console.print(f"slide [cyan]{slide}[/] shape [cyan]{shape}[/] text set")
+
+
+# ── set-position ─────────────────────────────────────────────────
+@app.command(
+    name="set-position",
+    help=(
+        "Reposition / resize an existing shape on a slide. Use list-shapes to "
+        "find the index. Position is the top-left corner in points; width and "
+        "height in points. Pass --x and --y together (or neither). Useful when "
+        "the layout master positions a body or image off where you want it."
+    ),
+)
+def set_position(
+    slide: int = typer.Option(..., "--slide", "-s", help="Slide number (1-based)"),
+    shape: int = typer.Option(..., "--shape", "-i", help="Shape index from list-shapes"),
+    x: Optional[int] = typer.Option(None, "--x", help="Left position in points"),
+    y: Optional[int] = typer.Option(None, "--y", help="Top position in points"),
+    width: Optional[int] = typer.Option(None, "--w", help="Width in points"),
+    height: Optional[int] = typer.Option(None, "--h", help="Height in points"),
+):
+    if (x is None) != (y is None):
+        err.print("keynote: pass --x and --y together (or neither)")
+        raise typer.Exit(2)
+    if x is None and width is None and height is None:
+        err.print("keynote: nothing to do — pass at least --x/--y, --w, or --h")
+        raise typer.Exit(2)
+
+    parts = []
+    if x is not None:
+        parts.append(f"set position of iWork item {shape} to {{{x}, {y}}}")
+    if width is not None:
+        parts.append(f"set width of iWork item {shape} to {width}")
+    if height is not None:
+        parts.append(f"set height of iWork item {shape} to {height}")
+    body = "\n            ".join(parts)
+    script = f'''
+tell application "Keynote"
+    tell front document
+        tell slide {slide}
+            {body}
+        end tell
+    end tell
+end tell
+'''
+    run_as(script)
+    bits = []
+    if x is not None:
+        bits.append(f"pos=({x},{y})")
+    if width is not None:
+        bits.append(f"w={width}")
+    if height is not None:
+        bits.append(f"h={height}")
+    console.print(f"slide [cyan]{slide}[/] shape [cyan]{shape}[/] {' '.join(bits)}")
 
 
 # ── delete-shape ─────────────────────────────────────────────────
@@ -635,6 +731,145 @@ end tell
     console.print(
         f"slide [cyan]{slide}[/] table [cyan]{table}[/] cell ([cyan]{row}[/],[cyan]{col}[/]) set"
     )
+
+
+# ── get-cell ─────────────────────────────────────────────────────
+@app.command(
+    name="get-cell",
+    help=(
+        "Read the value of one cell in a table. Default --table is 1 (slides "
+        "usually have one)."
+    ),
+)
+def get_cell(
+    slide: int = typer.Option(..., "--slide", "-s", help="Slide number (1-based)"),
+    row: int = typer.Option(..., "--row", "-r", help="Row (1-based)"),
+    col: int = typer.Option(..., "--col", "-c", help="Column (1-based)"),
+    table: int = typer.Option(1, "--table", "-t", help="Table index on the slide (1-based, default 1)"),
+):
+    script = f'''
+tell application "Keynote"
+    tell front document
+        tell slide {slide}
+            return (value of cell {col} of row {row} of table {table}) as text
+        end tell
+    end tell
+end tell
+'''
+    val = run_as(script)
+    print(val)
+
+
+# ── insert-row / insert-col ──────────────────────────────────────
+@app.command(
+    name="insert-row",
+    help=(
+        "Insert a new empty row into a table. The new row appears at position "
+        "--at; existing rows at and below shift down. Use --at = rowCount + 1 "
+        "to append at the end."
+    ),
+)
+def insert_row(
+    slide: int = typer.Option(..., "--slide", "-s", help="Slide number (1-based)"),
+    at: int = typer.Option(..., "--at", help="Row position for the new row (1-based)"),
+    table: int = typer.Option(1, "--table", "-t", help="Table index on the slide"),
+):
+    script = f'''
+tell application "Keynote"
+    tell front document
+        tell slide {slide}
+            tell table {table}
+                set rowCount to row count
+                if {at} < 1 or {at} > rowCount + 1 then error "--at out of range (1.." & (rowCount + 1) & ")"
+                if {at} > rowCount then
+                    make new row at after row rowCount
+                else
+                    make new row at before row {at}
+                end if
+            end tell
+        end tell
+    end tell
+end tell
+'''
+    run_as(script)
+    console.print(f"slide [cyan]{slide}[/] table [cyan]{table}[/] inserted row at [cyan]{at}[/]")
+
+
+@app.command(
+    name="insert-col",
+    help=(
+        "Insert a new empty column into a table. The new column appears at "
+        "position --at; existing columns at and right of --at shift right. "
+        "Use --at = colCount + 1 to append at the end."
+    ),
+)
+def insert_col(
+    slide: int = typer.Option(..., "--slide", "-s", help="Slide number (1-based)"),
+    at: int = typer.Option(..., "--at", help="Column position for the new column (1-based)"),
+    table: int = typer.Option(1, "--table", "-t", help="Table index on the slide"),
+):
+    script = f'''
+tell application "Keynote"
+    tell front document
+        tell slide {slide}
+            tell table {table}
+                set colCount to column count
+                if {at} < 1 or {at} > colCount + 1 then error "--at out of range (1.." & (colCount + 1) & ")"
+                if {at} > colCount then
+                    make new column at after column colCount
+                else
+                    make new column at before column {at}
+                end if
+            end tell
+        end tell
+    end tell
+end tell
+'''
+    run_as(script)
+    console.print(f"slide [cyan]{slide}[/] table [cyan]{table}[/] inserted column at [cyan]{at}[/]")
+
+
+# ── delete-row / delete-col ──────────────────────────────────────
+@app.command(name="delete-row", help="Delete a row from a table.")
+def delete_row(
+    slide: int = typer.Option(..., "--slide", "-s", help="Slide number (1-based)"),
+    row: int = typer.Option(..., "--row", "-r", help="Row to delete (1-based)"),
+    table: int = typer.Option(1, "--table", "-t", help="Table index on the slide"),
+):
+    script = f'''
+tell application "Keynote"
+    tell front document
+        tell slide {slide}
+            tell table {table}
+                delete row {row}
+            end tell
+        end tell
+    end tell
+end tell
+'''
+    run_as(script)
+    console.print(f"slide [cyan]{slide}[/] table [cyan]{table}[/] deleted row [cyan]{row}[/]")
+
+
+@app.command(name="delete-col", help="Delete a column from a table.")
+def delete_col(
+    slide: int = typer.Option(..., "--slide", "-s", help="Slide number (1-based)"),
+    col: int = typer.Option(..., "--col", "-c", help="Column to delete (1-based)"),
+    table: int = typer.Option(1, "--table", "-t", help="Table index on the slide"),
+):
+    script = f'''
+tell application "Keynote"
+    tell front document
+        tell slide {slide}
+            tell table {table}
+                delete column {col}
+            end tell
+        end tell
+    end tell
+end tell
+'''
+    run_as(script)
+    console.print(f"slide [cyan]{slide}[/] table [cyan]{table}[/] deleted column [cyan]{col}[/]")
 
 
 # ── preview ──────────────────────────────────────────────────────
