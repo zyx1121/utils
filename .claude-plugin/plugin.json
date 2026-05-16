@@ -1,7 +1,7 @@
 {
   "name": "utils",
-  "version": "0.8.0",
-  "description": "Agent-first CLI toolbox. Hooks watch ad-hoc scripts, propose new ones when patterns repeat. Each command is one self-contained PEP 723 script. Now bundles journal skills (daily/weekly/session reports).",
+  "version": "0.8.1",
+  "description": "Loki's personal Claude Code plugin — agent-first CLI toolbox plus skills, agents, and hooks. Each script is a self-contained PEP 723 executable; hooks watch ad-hoc scripts and propose new ones when patterns repeat.",
   "author": {
     "name": "Loki",
     "email": "yongxiang.zhan@outlook.com"
