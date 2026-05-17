@@ -145,6 +145,9 @@ skills/
 │   └── scripts/                journal-collect, journal-install-cron
 ├── keynote/SKILL.md            Keynote 簡報 building blocks (AppleScript-based)
 ├── keynote-style/SKILL.md      Loki's deck style guide — cover/outline/content rules + Chinese speaker notes
+├── method/                     procedure router — picks the right methodology (rca / cove / steelman / ...)
+│   ├── SKILL.md
+│   └── assets/                 14 methodologies as progressive-disclosure refs
 ├── morning/SKILL.md            /utils:morning — day-start briefing from journal / TODO / calendar / mail
 ├── now/SKILL.md                /utils:now — last-N-hours snapshot
 ├── post/SKILL.md               /utils:post — idea → ~1500-word blog → private gist
