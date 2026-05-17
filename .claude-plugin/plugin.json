@@ -1,6 +1,6 @@
 {
   "name": "utils",
-  "version": "0.8.1",
+  "version": "0.9.0",
   "description": "Loki's personal Claude Code plugin — agent-first CLI toolbox plus skills, agents, and hooks. Each script is a self-contained PEP 723 executable; hooks watch ad-hoc scripts and propose new ones when patterns repeat.",
   "author": {
     "name": "Loki",
