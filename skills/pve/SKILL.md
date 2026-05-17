@@ -32,7 +32,7 @@ utils pve dns parser.internal 10.10.10.42
 utils pve caddy parser.zyx.tw 10.10.10.42:8080
 ```
 
-`stop`, `clone`, and `forward del` are confirmation-gated unless `--yes` is passed.
+`stop` and `clone` are confirmation-gated unless `--yes` is passed. `forward del`, `dns`, and `caddy` run immediately — double-check before invoking.
 
 ## Decision rules
 
