@@ -209,31 +209,50 @@ def clone(
     name: str = typer.Argument(..., help="New VM name"),
     ip: str = typer.Option(..., "--ip", help="Internal IP (e.g. 10.10.10.42)"),
     template: int = typer.Option(PVE_TEMPLATE, "--template", help="Source template VMID"),
+    vmid: Optional[int] = typer.Option(None, "--vmid", help="Target VMID (default: next free ≥100)"),
+    cores: Optional[int] = typer.Option(None, "--cores", help="Override template cores"),
     ram: Optional[int] = typer.Option(None, "--ram", help="Override template RAM (MB)"),
+    disk: Optional[int] = typer.Option(None, "--disk", help="Resize scsi0 to N GB (must be ≥ template size)"),
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation"),
 ) -> None:
     existing = {v["vmid"] for v in parse_qm_list(ssh_run(PVE_HOST, "qm", "list"))}
-    new_vmid = 100
-    while new_vmid in existing:
-        new_vmid += 1
+    if vmid is not None:
+        if vmid in existing:
+            fail(f"VMID {vmid} already in use", hint="run `utils pve list` to see allocated IDs")
+        new_vmid = vmid
+    else:
+        new_vmid = 100
+        while new_vmid in existing:
+            new_vmid += 1
 
     plan = f"clone template {template} → VMID {new_vmid} as {name!r}, IP {ip}/24, gw {GATEWAY_IP}"
+    if cores:
+        plan += f", cores {cores}"
     if ram:
         plan += f", RAM {ram}MB"
+    if disk:
+        plan += f", disk {disk}GB"
     console.print(plan)
     if not yes and not typer.confirm("proceed?"):
         fail("aborted", why="user did not confirm", hint="pass --yes to skip")
 
     ssh_run(PVE_HOST, "qm", "clone", str(template), str(new_vmid), "--name", name, "--full")
     ssh_run(PVE_HOST, "qm", "set", str(new_vmid), "--ipconfig0", f"ip={ip}/24,gw={GATEWAY_IP}")
+    if cores:
+        ssh_run(PVE_HOST, "qm", "set", str(new_vmid), "--cores", str(cores))
     if ram:
         ssh_run(PVE_HOST, "qm", "set", str(new_vmid), "--memory", str(ram))
+    if disk:
+        ssh_run(PVE_HOST, "qm", "resize", str(new_vmid), "scsi0", f"{disk}G")
     ssh_run(PVE_HOST, "qm", "start", str(new_vmid))
 
     emit({
         "vmid": new_vmid,
         "name": name,
         "ip": ip,
+        "cores": cores,
+        "ram_mb": ram,
+        "disk_gb": disk,
         "ssh_alias_block": f"Host {name}\n    HostName {ip}\n    User user",
         "next_steps": [
             f"append the ssh_alias_block above to ~/.ssh/config",
@@ -287,6 +306,8 @@ def forward(
 def dns(
     host: str = typer.Argument(..., help="Hostname (e.g. parser.internal)"),
     ip: str = typer.Argument(..., help="IP"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show planned change without applying"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation"),
 ) -> None:
     # Append only if not already present; reload dnsmasq.
     check_cmd = f"grep -qE '\\\\b{re.escape(host)}\\\\b' {shlex.quote(GATEWAY_DNS_HOSTS)} && echo present || echo absent"
@@ -294,6 +315,15 @@ def dns(
     if present == "present":
         emit({"host": host, "ip": ip, "action": "skipped", "reason": "already in hosts file"})
         return
+
+    plan = f"append `{ip} {host}` to {GATEWAY_DNS_HOSTS} on {GATEWAY_HOST} + reload dnsmasq"
+    if dry_run:
+        emit({"host": host, "ip": ip, "action": "dry-run", "plan": plan})
+        return
+    console.print(plan)
+    if not yes and not typer.confirm("proceed?"):
+        fail("aborted", why="user did not confirm", hint="pass --yes to skip")
+
     ssh_run(GATEWAY_HOST, "sh", "-c", f"echo {shlex.quote(f'{ip} {host}')} >> {shlex.quote(GATEWAY_DNS_HOSTS)}")
     ssh_run(GATEWAY_HOST, "sudo", "systemctl", "reload", "dnsmasq")
     emit({"host": host, "ip": ip, "action": "added"})
