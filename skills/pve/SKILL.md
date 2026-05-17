@@ -24,15 +24,15 @@ utils pve ssh <name> [cmd]         # SSH via alias; refuses if alias missing
 ```bash
 utils pve start <name>
 utils pve stop <name> [-y]
-utils pve clone <name> --ip 10.10.10.42 [--template 9000] [--ram 4096]
+utils pve clone <name> --ip 10.10.10.42 [--vmid 113] [--template 9000] [--cores 4] [--ram 4096] [--disk 100]
 utils pve forward 8443:10.10.10.42:443         # add
 utils pve forward --action list
 utils pve forward --action del --line 3
-utils pve dns parser.internal 10.10.10.42
+utils pve dns parser.internal 10.10.10.42 [--dry-run] [-y]
 utils pve caddy parser.zyx.tw 10.10.10.42:8080
 ```
 
-`stop` and `clone` are confirmation-gated unless `--yes` is passed. `forward del`, `dns`, and `caddy` run immediately — double-check before invoking.
+`stop`, `clone`, and `dns` are confirmation-gated unless `--yes` is passed. `dns` also supports `--dry-run` to preview the planned append + reload. `forward del` and `caddy` run immediately — double-check before invoking.
 
 ## Decision rules
 
@@ -40,6 +40,7 @@ utils pve caddy parser.zyx.tw 10.10.10.42:8080
 - **Defaults come from env vars** (`UTILS_PVE_HOST`, `UTILS_PVE_GATEWAY`, `UTILS_PVE_TEMPLATE`, `UTILS_PVE_GATEWAY_IP`, `UTILS_PVE_GATEWAY_DNS`, `UTILS_PVE_GATEWAY_CADDY`). Loki's conventions are the fallback; other operators set their own.
 - **Full provisioning chain** (clone → DNS → forward → Caddy → smoke test) should go through the `pve-provisioner` agent, not done by hand. Invoke it when the user asks for the whole sequence in one breath.
 - **Stop / forward del / caddy domain rewrites** are destructive. Confirm with the user, even when the agent has free rein on safe ops.
+- **`clone` without `--vmid` auto-picks the next free ID ≥100.** When the VM has a specific role (e.g. matching IP last octet, or a number documented elsewhere), pass `--vmid` explicitly — don't trust auto-pick to give a memorable number.
 
 ## When to consult DEVICES.md
 
