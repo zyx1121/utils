@@ -1,4 +1,5 @@
 ---
+name: catchup
 description: "補寫漏掉的 journal 報告 — launchd 漏跑 (laptop 睡太久 / 關機過) 後手動補日報週報。Triggers on '/utils:catchup', '補日報', '補週報', 'backfill journal'."
 argument-hint: "[<days>=14]"
 ---

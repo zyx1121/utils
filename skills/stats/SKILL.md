@@ -1,4 +1,5 @@
 ---
+name: stats
 description: "Raw journal stats — 純數字 JSON，不寫敘事。Triggers on '/utils:stats', 'journal 統計', 'raw stats'."
 argument-hint: "[YYYY-MM-DD] [YYYY-MM-DD]"
 ---

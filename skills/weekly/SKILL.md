@@ -1,4 +1,5 @@
 ---
+name: weekly
 description: "本週 journal 週報 — Initiative + PPP + Numbers + Δ vs 上週 架構。Triggers on '/utils:weekly', '週報', 'weekly report', '這週做了什麼'."
 argument-hint: "[YYYY-MM-DD (本週任一天)]"
 ---

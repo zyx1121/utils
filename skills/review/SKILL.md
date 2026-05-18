@@ -1,6 +1,6 @@
 ---
 name: review
-description: Review what's drifting in Loki's agent setup — runtime (utils observation log) and static (SKILL.md files). Surfaces new script candidates, fix candidates for failing utils atoms, missed-atom hits (agent skipped a known atom), and lint issues across personal skills. Use when the user runs `/utils:review`, asks "any new utils candidates?", "lint my skills", "what should utils learn next?", "which skills are broken?", "review my agent setup". Reads `~/.claude/data/utils/observations.jsonl` for usage, walks `~/skills/` for static lint.
+description: Review what's drifting in Loki's agent setup — runtime (utils observation log) and static (SKILL.md files). Surfaces new script candidates, fix candidates for failing atoms, missed-atom hits (agent skipped a known atom), and lint issues across personal skills. Use when the user runs `/utils:review`, asks "any new utils candidates?", "lint my skills", "what should utils learn next?", "review my agent setup".
 ---
 
 # /utils:review — find what's drifting in the agent setup

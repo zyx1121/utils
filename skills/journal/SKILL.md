@@ -1,4 +1,5 @@
 ---
+name: journal
 description: "Journal 報告寫作架構 — Initiative-grouped + PPP + Numbers dashboard。Daily / weekly / monthly 都用同一套骨架。Triggers when generating journal reports via /utils:daily, /utils:weekly, or any '寫日報 / 寫週報 / journal entry about Claude Code activity' task. Load this skill before writing any journal report."
 ---
 

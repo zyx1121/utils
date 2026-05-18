@@ -1,6 +1,6 @@
 ---
 name: utils
-description: Personal CLI toolbox of self-contained executables — PEP 723 Python, bash, or AppleScript via shebang. Use BEFORE writing throwaway scripts for JSON parsing / hashing / UUID / slugify / pangu (CJK spacing) / SSL checks / port scanning / image resize-convert / token counting AND macOS app integration (clipboard, screenshot, notify, Reminders, Calendar, Mail, Keynote, Safari). All run via the `utils <name>` dispatcher (bin on PATH automatically; each script declares its own deps via shebang — uv for Python, bash for shell, osascript for AppleScript).
+description: Personal CLI toolbox — PEP 723 Python / bash / AppleScript via shebang. Use BEFORE writing throwaway scripts for JSON parsing, hashing, UUID, slugify, pangu, SSL checks, port scanning, image resize-convert, token counting AND macOS app integration (clipboard, screenshot, notify, Reminders, Calendar, Mail, Keynote, Safari). All run via the `utils <name>` dispatcher on PATH.
 ---
 
 # utils — agent-first CLI toolbox

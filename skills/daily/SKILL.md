@@ -1,4 +1,5 @@
 ---
+name: daily
 description: "今日 journal 日報 — Initiative + PPP + Numbers 架構。Triggers on '/utils:daily', '日報', 'daily report', '今天做了什麼'."
 argument-hint: "[YYYY-MM-DD]"
 ---

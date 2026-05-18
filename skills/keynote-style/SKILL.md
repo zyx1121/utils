@@ -1,6 +1,6 @@
 ---
 name: keynote-style
-description: Use when user is creating, editing, or reviewing a Keynote / slide deck / 投影片 / 簡報 — defines Loki's personal deck format. Triggers on "做投影片", "幫我做簡報", "整理成 keynote", "outline 一下", "review my slides", "rewrite this deck", "presentation", "keynote", ".key 檔", "slides". Covers cover-page fields, outline-as-section-labels, claim-style content titles, multi-level bullet hierarchy (L0–L3), three body patterns (nested bullets / ASCII tree / comparison table), English copy with explicit subject/object, and optional Chinese speaker notes.
+description: Use when user is creating, editing, or reviewing a Keynote / slide deck / 投影片 / 簡報 — defines Loki's personal deck format. Triggers on "做投影片", "幫我做簡報", "整理成 keynote", "outline 一下", "review my slides", "rewrite this deck", "presentation", "keynote", ".key 檔". Covers cover fields, outline-as-section-labels, claim-style titles, L0–L3 bullets, three body patterns, English copy, optional Chinese notes.
 ---
 
 # Keynote Style — Loki's Format

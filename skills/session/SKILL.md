@@ -1,4 +1,5 @@
 ---
+name: session
 description: "整理 Claude Code session(s) — 單個、最近 N 個、今天所有、特定日期、UUID。Skill 解析範圍後 dispatch session-summarizer agent(s) 並行整理。Triggers on '/utils:session', '整理 session', '這個 session 在幹嘛', '整理今天所有 session', '整理最近 N 個 session', 'summarize this session', 'summarize my sessions'."
 argument-hint: "[<session-id> | last <N> | today | <YYYY-MM-DD>]"
 ---

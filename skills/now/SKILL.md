@@ -1,4 +1,5 @@
 ---
+name: now
 description: "現在 journal 快照 — 拉最近 N 小時看你在幹嘛。Triggers on '/utils:now', '現在在幹嘛', 'snapshot'."
 argument-hint: "[hours=4]"
 ---
