@@ -32,6 +32,7 @@ _LIB = str(_Path(__file__).resolve().parent.parent / "lib")
 if _LIB not in _sys.path:
     _sys.path.insert(0, _LIB)
 
+import base64
 import os
 import re
 import shlex
@@ -51,6 +52,9 @@ PVE_TEMPLATE = int(os.environ.get("UTILS_PVE_TEMPLATE", "9000"))
 GATEWAY_IP = os.environ.get("UTILS_PVE_GATEWAY_IP", "10.10.10.1")
 GATEWAY_DNS_HOSTS = os.environ.get("UTILS_PVE_GATEWAY_DNS", "/home/user/gateway/dns/hosts")
 GATEWAY_CADDYFILE = os.environ.get("UTILS_PVE_GATEWAY_CADDY", "/home/user/gateway/Caddyfile")
+GATEWAY_CADDY_COMPOSE_DIR = os.environ.get("UTILS_PVE_GATEWAY_CADDY_COMPOSE", "/home/user/gateway")
+GATEWAY_CADDY_SERVICE = os.environ.get("UTILS_PVE_GATEWAY_CADDY_SERVICE", "caddy")
+GATEWAY_CADDY_CONTAINER_CONFIG = os.environ.get("UTILS_PVE_GATEWAY_CADDY_CONTAINER_CONFIG", "/etc/caddy/Caddyfile")
 
 app = typer.Typer(
     no_args_is_help=True,
@@ -107,6 +111,76 @@ def find_vm(name_or_id: str) -> dict:
         f"no VM named {name_or_id!r}",
         why="not in `qm list`",
         hint="run `utils pve list` to see all VMs",
+    )
+
+
+def _vm_ip(vmid: int) -> Optional[str]:
+    """Extract the VM's IP from `qm config ... ipconfig0`. None if unset."""
+    config_out = ssh_run(PVE_HOST, "qm", "config", str(vmid))
+    for line in config_out.splitlines():
+        if line.startswith("ipconfig0:"):
+            m = re.search(r"ip=([\d.]+)", line)
+            if m:
+                return m.group(1)
+    return None
+
+
+def _find_ssh_forward_port(vm_ip: str) -> Optional[int]:
+    """Best-effort: scan PVE iptables for a forward to <vm_ip>:22, return host port."""
+    try:
+        rules = ssh_run(PVE_HOST, "iptables", "-t", "nat", "-L", "PREROUTING", "-n", "--line-numbers")
+    except SystemExit:
+        return None
+    for line in rules.splitlines():
+        m = re.search(rf"dpt:(\d+)\b.*to:{re.escape(vm_ip)}:22\b", line)
+        if m:
+            return int(m.group(1))
+    return None
+
+
+def _pve_real_hostname() -> Optional[str]:
+    """Resolve PVE_HOST alias to its real hostname via `ssh -G`. None on failure."""
+    result = subprocess.run(
+        ["ssh", "-G", PVE_HOST], capture_output=True, text=True, check=False,
+    )
+    if result.returncode != 0:
+        return None
+    for line in result.stdout.splitlines():
+        if line.startswith("hostname "):
+            return line.split(None, 1)[1].strip()
+    return None
+
+
+def _clean_known_hosts(targets: list[str]) -> list[str]:
+    """ssh-keygen -R each target, return the ones that had entries to remove."""
+    cleaned = []
+    for t in targets:
+        result = subprocess.run(
+            ["ssh-keygen", "-R", t], capture_output=True, text=True, check=False,
+        )
+        # ssh-keygen prints "Host X found: line N" before removing
+        if "found: line" in result.stdout:
+            cleaned.append(t)
+    return cleaned
+
+
+def _caddy_reload() -> None:
+    """Reload Caddy via the dockerised gateway service."""
+    ssh_run(
+        GATEWAY_HOST, "sh", "-c",
+        f"cd {shlex.quote(GATEWAY_CADDY_COMPOSE_DIR)} && "
+        f"docker compose exec -T {shlex.quote(GATEWAY_CADDY_SERVICE)} "
+        f"caddy reload --config {shlex.quote(GATEWAY_CADDY_CONTAINER_CONFIG)}",
+    )
+
+
+def _run_remote_python(host: str, script: str, *args: str) -> str:
+    """Run a Python script on a remote host via base64 to avoid quoting hell."""
+    b64 = base64.b64encode(script.encode()).decode()
+    quoted_args = " ".join(shlex.quote(a) for a in args)
+    return ssh_run(
+        host, "sh", "-c",
+        f"echo {b64} | base64 -d | python3 - {quoted_args}",
     )
 
 
@@ -170,6 +244,53 @@ def stop(
         fail("aborted", why="user did not confirm", hint="pass --yes to skip")
     ssh_run(PVE_HOST, "qm", "stop", str(vm["vmid"]))
     emit({"vmid": vm["vmid"], "name": vm["name"], "action": "stop"})
+
+
+# ── destroy ─────────────────────────────────────────────────────
+@app.command(help="Destroy a VM permanently — stops if running, purges disks, cleans local known_hosts.")
+def destroy(
+    name: str = typer.Argument(..., help="VM name or VMID"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation"),
+) -> None:
+    vm = find_vm(name)
+    vm_ip = _vm_ip(vm["vmid"])
+    forward_port = _find_ssh_forward_port(vm_ip) if vm_ip else None
+
+    plan_bits = [f"DESTROY VM {vm['name']!r} (VMID {vm['vmid']})"]
+    if vm_ip:
+        plan_bits.append(f"IP {vm_ip}")
+    if vm["status"] == "running":
+        plan_bits.append("will stop first")
+    plan_bits.append("disks + config purged, irreversible")
+    plan = " — ".join(plan_bits)
+    console.print(f"[red]{plan}[/]")
+    if not yes and not typer.confirm("proceed?"):
+        fail("aborted", why="user did not confirm", hint="pass --yes to skip")
+
+    if vm["status"] == "running":
+        ssh_run(PVE_HOST, "qm", "stop", str(vm["vmid"]))
+
+    ssh_run(
+        PVE_HOST, "qm", "destroy", str(vm["vmid"]),
+        "--purge", "--destroy-unreferenced-disks", "1",
+    )
+
+    targets: list[str] = [vm["name"]]
+    if vm_ip:
+        targets.append(vm_ip)
+    if forward_port:
+        host = _pve_real_hostname()
+        if host:
+            targets.append(f"[{host}]:{forward_port}")
+    cleaned = _clean_known_hosts(targets)
+
+    emit({
+        "vmid": vm["vmid"],
+        "name": vm["name"],
+        "ip": vm_ip,
+        "action": "destroy",
+        "known_hosts_cleaned": cleaned,
+    })
 
 
 # ── ssh ─────────────────────────────────────────────────────────
@@ -302,14 +423,60 @@ def forward(
 
 
 # ── dns ─────────────────────────────────────────────────────────
-@app.command(help="Add a *.internal record to gateway dnsmasq.")
+@app.command(help="Manage *.internal records in gateway dnsmasq.")
 def dns(
-    host: str = typer.Argument(..., help="Hostname (e.g. parser.internal)"),
-    ip: str = typer.Argument(..., help="IP"),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Show planned change without applying"),
+    host: Optional[str] = typer.Argument(None, help="Hostname (required for add/remove)"),
+    ip: Optional[str] = typer.Argument(None, help="IP (required for add)"),
+    action: str = typer.Option("add", "--action", help="add | remove | list"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show planned change without applying (add only)"),
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation"),
 ) -> None:
-    # Append only if not already present; reload dnsmasq.
+    if action == "list":
+        out = ssh_run(GATEWAY_HOST, "cat", GATEWAY_DNS_HOSTS)
+        records = []
+        for line in out.splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            parts = stripped.split()
+            if len(parts) >= 2:
+                records.append({"ip": parts[0], "host": parts[1]})
+        emit({"records": records, "hosts_file": GATEWAY_DNS_HOSTS})
+        return
+
+    if not host:
+        fail("host required", hint="utils pve dns <hostname> ...")
+
+    if action == "remove":
+        # check present
+        check_cmd = (
+            f"grep -qE '[[:space:]]{re.escape(host)}([[:space:]]|$)' "
+            f"{shlex.quote(GATEWAY_DNS_HOSTS)} && echo present || echo absent"
+        )
+        present = ssh_run(GATEWAY_HOST, "sh", "-c", check_cmd).strip()
+        if present != "present":
+            emit({"host": host, "action": "skipped", "reason": "not in hosts file"})
+            return
+        if not yes and not typer.confirm(f"remove DNS record for {host!r}?"):
+            fail("aborted", why="user did not confirm", hint="pass --yes to skip")
+        # rewrite without matching lines, then reload
+        rewrite = (
+            f"tmp=$(mktemp) && "
+            f"grep -vE '[[:space:]]{re.escape(host)}([[:space:]]|$)' "
+            f"{shlex.quote(GATEWAY_DNS_HOSTS)} > $tmp && "
+            f"mv $tmp {shlex.quote(GATEWAY_DNS_HOSTS)}"
+        )
+        ssh_run(GATEWAY_HOST, "sh", "-c", rewrite)
+        ssh_run(GATEWAY_HOST, "sudo", "systemctl", "reload", "dnsmasq")
+        emit({"host": host, "action": "removed"})
+        return
+
+    if action != "add":
+        fail(f"unknown action {action!r}", hint="use add | remove | list")
+
+    # add (existing behavior)
+    if not ip:
+        fail("ip required for add", hint="utils pve dns <hostname> <ip>")
     check_cmd = f"grep -qE '\\\\b{re.escape(host)}\\\\b' {shlex.quote(GATEWAY_DNS_HOSTS)} && echo present || echo absent"
     present = ssh_run(GATEWAY_HOST, "sh", "-c", check_cmd).strip()
     if present == "present":
@@ -330,11 +497,76 @@ def dns(
 
 
 # ── caddy ───────────────────────────────────────────────────────
-@app.command(help="Add a Caddy reverse-proxy stanza on the gateway.")
+_CADDY_REMOVE_SCRIPT = """
+import sys
+path, domain = sys.argv[1], sys.argv[2]
+with open(path) as f:
+    lines = f.readlines()
+out, skip, depth, removed = [], False, 0, False
+for line in lines:
+    stripped = line.lstrip()
+    head = stripped.split('{', 1)[0].strip() if '{' in stripped else ''
+    domains = [d.strip() for d in head.split(',')] if head else []
+    if not skip and domain in domains and '{' in line:
+        skip = True
+        removed = True
+        depth = line.count('{') - line.count('}')
+        continue
+    if skip:
+        depth += line.count('{') - line.count('}')
+        if depth <= 0:
+            skip = False
+        continue
+    out.append(line)
+while out and out[-1].strip() == '':
+    out.pop()
+if out:
+    out.append('\\n')
+with open(path, 'w') as f:
+    f.writelines(out)
+print('removed' if removed else 'not_found')
+"""
+
+
+@app.command(help="Manage Caddy reverse-proxy stanzas on the gateway.")
 def caddy(
-    domain: str = typer.Argument(..., help="Public domain (e.g. parser.zyx.tw)"),
-    upstream: str = typer.Argument(..., help="Upstream host:port (e.g. 10.10.10.42:8080)"),
+    domain: Optional[str] = typer.Argument(None, help="Public domain (required for add/remove)"),
+    upstream: Optional[str] = typer.Argument(None, help="Upstream host:port (required for add)"),
+    action: str = typer.Option("add", "--action", help="add | remove | list"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation for remove"),
 ) -> None:
+    if action == "list":
+        out = ssh_run(
+            GATEWAY_HOST, "sh", "-c",
+            f"grep -E '^[A-Za-z0-9*].*[{{][[:space:]]*$' {shlex.quote(GATEWAY_CADDYFILE)} || true",
+        )
+        domains = []
+        for line in out.splitlines():
+            head = line.split("{", 1)[0].strip()
+            if head:
+                domains.extend(d.strip() for d in head.split(","))
+        emit({"domains": domains, "caddyfile": GATEWAY_CADDYFILE})
+        return
+
+    if not domain:
+        fail("domain required", hint="utils pve caddy <domain> ...")
+
+    if action == "remove":
+        if not yes and not typer.confirm(f"remove Caddy block for {domain!r}?"):
+            fail("aborted", why="user did not confirm", hint="pass --yes to skip")
+        result = _run_remote_python(GATEWAY_HOST, _CADDY_REMOVE_SCRIPT, GATEWAY_CADDYFILE, domain).strip()
+        if result == "not_found":
+            emit({"domain": domain, "action": "skipped", "reason": "domain not in Caddyfile"})
+            return
+        _caddy_reload()
+        emit({"domain": domain, "action": "removed"})
+        return
+
+    if action != "add":
+        fail(f"unknown action {action!r}", hint="use add | remove | list")
+
+    if not upstream:
+        fail("upstream required for add", hint="utils pve caddy <domain> <host:port>")
     check_cmd = f"grep -qE '^{re.escape(domain)}\\\\b' {shlex.quote(GATEWAY_CADDYFILE)} && echo present || echo absent"
     present = ssh_run(GATEWAY_HOST, "sh", "-c", check_cmd).strip()
     if present == "present":
@@ -342,7 +574,7 @@ def caddy(
         return
     stanza = f"\n{domain} {{\n    reverse_proxy {upstream}\n}}\n"
     ssh_run(GATEWAY_HOST, "sh", "-c", f"printf %s {shlex.quote(stanza)} >> {shlex.quote(GATEWAY_CADDYFILE)}")
-    ssh_run(GATEWAY_HOST, "sudo", "caddy", "reload", "--config", GATEWAY_CADDYFILE)
+    _caddy_reload()
     emit({"domain": domain, "upstream": upstream, "action": "added"})
 
 

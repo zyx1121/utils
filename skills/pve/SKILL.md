@@ -24,22 +24,28 @@ utils pve ssh <name> [cmd]         # SSH via alias; refuses if alias missing
 ```bash
 utils pve start <name>
 utils pve stop <name> [-y]
+utils pve destroy <name> [-y]                  # purge disks + clean local known_hosts
 utils pve clone <name> --ip 10.10.10.42 [--vmid 113] [--template 9000] [--cores 4] [--ram 4096] [--disk 100]
 utils pve forward 8443:10.10.10.42:443         # add
 utils pve forward --action list
 utils pve forward --action del --line 3
-utils pve dns parser.internal 10.10.10.42 [--dry-run] [-y]
-utils pve caddy parser.zyx.tw 10.10.10.42:8080
+utils pve dns parser.internal 10.10.10.42 [--dry-run] [-y]   # add (default action)
+utils pve dns parser.internal --action remove [-y]
+utils pve dns --action list
+utils pve caddy parser.zyx.tw 10.10.10.42:8080               # add (default action)
+utils pve caddy parser.zyx.tw --action remove [-y]
+utils pve caddy --action list
 ```
 
-`stop`, `clone`, and `dns` are confirmation-gated unless `--yes` is passed. `dns` also supports `--dry-run` to preview the planned append + reload. `forward del` and `caddy` run immediately — double-check before invoking.
+`stop`, `destroy`, `clone`, `dns`, and `caddy --action remove` are confirmation-gated unless `--yes` is passed. `dns` add also supports `--dry-run` to preview the planned append + reload. `forward del` and `caddy add` run immediately — double-check before invoking.
 
 ## Decision rules
 
 - **Never bypass the dispatcher with hardcoded IP/port.** If `ssh <name>` fails, the alias is missing — fix the alias, don't write a raw `ssh -p ... user@<ip>` workaround.
 - **Defaults come from env vars** (`UTILS_PVE_HOST`, `UTILS_PVE_GATEWAY`, `UTILS_PVE_TEMPLATE`, `UTILS_PVE_GATEWAY_IP`, `UTILS_PVE_GATEWAY_DNS`, `UTILS_PVE_GATEWAY_CADDY`). Loki's conventions are the fallback; other operators set their own.
 - **Full provisioning chain** (clone → DNS → forward → Caddy → smoke test) should go through the `pve-provisioner` agent, not done by hand. Invoke it when the user asks for the whole sequence in one breath.
-- **Stop / forward del / caddy domain rewrites** are destructive. Confirm with the user, even when the agent has free rein on safe ops.
+- **Stop / destroy / forward del / dns remove / caddy remove** are destructive. Confirm with the user, even when the agent has free rein on safe ops.
+- **`destroy` cleans local `~/.ssh/known_hosts`** best-effort — by VM name, IP, and (if a `:22` forward exists) the `[pve-host]:port` entry. If it can't find one of these, it skips silently — that's not a failure.
 - **`clone` without `--vmid` auto-picks the next free ID ≥100.** When the VM has a specific role (e.g. matching IP last octet, or a number documented elsewhere), pass `--vmid` explicitly — don't trust auto-pick to give a memorable number.
 
 ## When to consult DEVICES.md
@@ -69,4 +75,17 @@ utils pve caddy parser.zyx.tw 10.10.10.42:8080   # HTTPS termination + reverse p
 ```bash
 utils pve list
 utils pve status parser
+utils pve dns --action list
+utils pve caddy --action list
 ```
+
+**Rebuild a VM from scratch (same VMID + IP):**
+
+```bash
+utils pve destroy bro -y                                # purges VM + local known_hosts
+utils pve caddy bro.zyx.tw --action remove -y           # if had a Caddy route
+utils pve clone bro --ip 10.10.10.113 --vmid 113 --cores 4 --ram 8192 --disk 100
+utils pve ssh bro echo ok                               # smoke test
+```
+
+Keep IP + VMID identical to reuse the existing `forward` rule, `dns` record, and SSH alias — only the host key in `~/.ssh/known_hosts` needs rotating, which `destroy` already handled.
