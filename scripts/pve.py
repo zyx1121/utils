@@ -520,15 +520,16 @@ def ssh_cmd(
 
 
 # ── clone ───────────────────────────────────────────────────────
-@app.command(help="Clone from template, set IP, start; prints SSH alias to add.")
+@app.command(help="Clone from template, set IP + auto-add 50<vmid>:22 SSH forward; prints SSH alias to add.")
 def clone(
     name: str = typer.Argument(..., help="New VM name"),
-    ip: str = typer.Option(..., "--ip", help="Internal IP (e.g. 10.10.10.42)"),
+    ip: Optional[str] = typer.Option(None, "--ip", help="Internal IP (default: <subnet>.<VMID>, derived from UTILS_PVE_GATEWAY_IP)"),
     template: int = typer.Option(PVE_TEMPLATE, "--template", help="Source template VMID"),
     vmid: Optional[int] = typer.Option(None, "--vmid", help="Target VMID (default: next free ≥100)"),
     cores: Optional[int] = typer.Option(None, "--cores", help="Override template cores"),
     ram: Optional[int] = typer.Option(None, "--ram", help="Override template RAM (MB)"),
     disk: Optional[int] = typer.Option(None, "--disk", help="Resize scsi0 to N GB (must be ≥ template size)"),
+    no_forward: bool = typer.Option(False, "--no-forward", help="Skip the auto-added 50<vmid>:22 external SSH forward"),
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation"),
 ) -> None:
     existing = {v["vmid"] for v in parse_qm_list(ssh_run(PVE_HOST, "qm", "list"))}
@@ -541,6 +542,19 @@ def clone(
         while new_vmid in existing:
             new_vmid += 1
 
+    if ip is None:
+        prefix_parts = GATEWAY_IP.split(".")
+        if len(prefix_parts) != 4 or not (1 <= new_vmid <= 254):
+            fail(
+                f"can't auto-derive IP for VMID {new_vmid}",
+                why=f"convention is <subnet>.<VMID> with VMID in 1-254 and a v4 subnet (GATEWAY_IP={GATEWAY_IP!r})",
+                hint="pass --ip explicitly or pick a VMID in 100-254",
+            )
+        ip = f"{'.'.join(prefix_parts[:3])}.{new_vmid}"
+
+    forward_port = 50000 + new_vmid
+    add_forward = not no_forward and 1 <= forward_port <= 65535
+
     plan = f"clone template {template} → VMID {new_vmid} as {name!r}, IP {ip}/24, gw {GATEWAY_IP}"
     if cores:
         plan += f", cores {cores}"
@@ -548,6 +562,8 @@ def clone(
         plan += f", RAM {ram}MB"
     if disk:
         plan += f", disk {disk}GB"
+    if add_forward:
+        plan += f", SSH forward :{forward_port}→{ip}:22"
     console.print(plan)
     if not yes and not typer.confirm("proceed?"):
         fail("aborted", why="user did not confirm", hint="pass --yes to skip")
@@ -562,6 +578,15 @@ def clone(
         ssh_run(PVE_HOST, "qm", "resize", str(new_vmid), "scsi0", f"{disk}G")
     ssh_run(PVE_HOST, "qm", "start", str(new_vmid))
 
+    if add_forward:
+        ssh_run(
+            PVE_HOST,
+            "iptables", "-t", "nat", "-A", "PREROUTING",
+            "-p", "tcp", "--dport", str(forward_port),
+            "-j", "DNAT", "--to", f"{ip}:22",
+        )
+        ssh_run(PVE_HOST, "sh", "-c", "iptables-save > /etc/iptables/rules.v4")
+
     emit({
         "vmid": new_vmid,
         "name": name,
@@ -569,11 +594,16 @@ def clone(
         "cores": cores,
         "ram_mb": ram,
         "disk_gb": disk,
-        "ssh_alias_block": f"Host {name}\n    HostName {ip}\n    User user",
+        "ssh_forward_port": forward_port if add_forward else None,
+        "ssh_alias_block": f"Host {name}\n  Port {forward_port}" if add_forward else None,
+        "ssh_alias_note": (
+            f"add the ssh_alias_block to ~/.ssh/config, then add `{name}` to the shared "
+            f"per-VM `Host a b c ...` block (HostName = PVE external IP, User, IdentityFile)"
+        ) if add_forward else None,
         "next_steps": [
-            f"append the ssh_alias_block above to ~/.ssh/config",
+            *( ["edit ~/.ssh/config per ssh_alias_block + ssh_alias_note"] if add_forward else [] ),
             f"utils pve dns {name}.internal {ip}",
-            f"utils pve ssh {name} echo ok   # smoke test",
+            f"ssh -o StrictHostKeyChecking=accept-new {name} echo ok   # smoke test",
         ],
     })
 
