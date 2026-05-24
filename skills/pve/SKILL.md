@@ -24,7 +24,7 @@ utils pve ssh <name> [cmd]         # SSH via alias; refuses if alias missing
 ```bash
 utils pve start <name>
 utils pve stop <name> [-y]
-utils pve destroy <name> [-y]                  # purge disks + clean local known_hosts
+utils pve destroy <name> [-y]                  # cascades: VM + forwards/DNS/Caddy/SSH alias/known_hosts
 utils pve clone <name> --ip 10.10.10.42 [--vmid 113] [--template 9000] [--cores 4] [--ram 4096] [--disk 100]
 utils pve forward 8443:10.10.10.42:443         # add
 utils pve forward --action list
@@ -45,7 +45,7 @@ utils pve caddy --action list
 - **Defaults come from env vars** (`UTILS_PVE_HOST`, `UTILS_PVE_GATEWAY`, `UTILS_PVE_TEMPLATE`, `UTILS_PVE_GATEWAY_IP`, `UTILS_PVE_GATEWAY_DNS`, `UTILS_PVE_GATEWAY_CADDY`). Loki's conventions are the fallback; other operators set their own.
 - **Full provisioning chain** (clone → DNS → forward → Caddy → smoke test) should go through the `pve-provisioner` agent, not done by hand. Invoke it when the user asks for the whole sequence in one breath.
 - **Stop / destroy / forward del / dns remove / caddy remove** are destructive. Confirm with the user, even when the agent has free rein on safe ops.
-- **`destroy` cleans local `~/.ssh/known_hosts`** best-effort — by VM name, IP, and (if a `:22` forward exists) the `[pve-host]:port` entry. If it can't find one of these, it skips silently — that's not a failure.
+- **`destroy` cascades by design.** After purging the VM it sweeps every related ref it can find by VM IP: matching `iptables` PREROUTING rules, dnsmasq hosts records, Caddy domain blocks whose `reverse_proxy` upstream resolves to that IP, the `Host <name>` entry in local `~/.ssh/config` (standalone block or name inside a shared `Host a b c` list), and finally local `~/.ssh/known_hosts` (by VM name, IP, and the `[pve-host]:port` entry if a `:22` forward existed). The pre-confirm plan shows the full cascade list — read it before saying yes. Anything not found is skipped silently.
 - **`clone` without `--vmid` auto-picks the next free ID ≥100.** When the VM has a specific role (e.g. matching IP last octet, or a number documented elsewhere), pass `--vmid` explicitly — don't trust auto-pick to give a memorable number.
 
 ## When to consult DEVICES.md
@@ -82,10 +82,13 @@ utils pve caddy --action list
 **Rebuild a VM from scratch (same VMID + IP):**
 
 ```bash
-utils pve destroy bro -y                                # purges VM + local known_hosts
-utils pve caddy bro.zyx.tw --action remove -y           # if had a Caddy route
+utils pve destroy bro -y                                # cascades VM + forwards + DNS + Caddy + SSH alias
 utils pve clone bro --ip 10.10.10.113 --vmid 113 --cores 4 --ram 8192 --disk 100
+# append the printed ssh_alias_block to ~/.ssh/config
+utils pve dns bro.internal 10.10.10.113
+utils pve forward 50113:10.10.10.113:22                 # if it had external SSH
+utils pve caddy bro.zyx.tw 10.10.10.113:8080            # if it had a Caddy route
 utils pve ssh bro echo ok                               # smoke test
 ```
 
-Keep IP + VMID identical to reuse the existing `forward` rule, `dns` record, and SSH alias — only the host key in `~/.ssh/known_hosts` needs rotating, which `destroy` already handled.
+`destroy` now wipes refs along with the VM. Reuse the same IP + VMID and you only re-create whatever routes the new VM actually needs — no leftover ghost rules from the old one.

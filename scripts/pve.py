@@ -125,17 +125,23 @@ def _vm_ip(vmid: int) -> Optional[str]:
     return None
 
 
-def _find_ssh_forward_port(vm_ip: str) -> Optional[int]:
-    """Best-effort: scan PVE iptables for a forward to <vm_ip>:22, return host port."""
+def _find_forwards_to_ip(vm_ip: str) -> list[dict]:
+    """Scan PVE iptables PREROUTING for DNAT rules targeting vm_ip.
+    Returns [{"line": N, "dport": host_port, "target_port": vm_port}, ...]."""
     try:
         rules = ssh_run(PVE_HOST, "iptables", "-t", "nat", "-L", "PREROUTING", "-n", "--line-numbers")
     except SystemExit:
-        return None
+        return []
+    matches: list[dict] = []
     for line in rules.splitlines():
-        m = re.search(rf"dpt:(\d+)\b.*to:{re.escape(vm_ip)}:22\b", line)
+        m = re.match(rf"^\s*(\d+)\s.*dpt:(\d+)\b.*to:{re.escape(vm_ip)}:(\d+)", line)
         if m:
-            return int(m.group(1))
-    return None
+            matches.append({
+                "line": int(m.group(1)),
+                "dport": int(m.group(2)),
+                "target_port": int(m.group(3)),
+            })
+    return matches
 
 
 def _pve_real_hostname() -> Optional[str]:
@@ -174,6 +180,11 @@ def _caddy_reload() -> None:
     )
 
 
+def _dnsmasq_reload() -> None:
+    """Reload dnsmasq on the gateway after editing the hosts file."""
+    ssh_run(GATEWAY_HOST, "sudo", "systemctl", "reload", "dnsmasq")
+
+
 def _run_remote_python(host: str, script: str, *args: str) -> str:
     """Run a Python script on a remote host via base64 to avoid quoting hell."""
     b64 = base64.b64encode(script.encode()).decode()
@@ -182,6 +193,157 @@ def _run_remote_python(host: str, script: str, *args: str) -> str:
         host, "sh", "-c",
         f"echo {b64} | base64 -d | python3 - {quoted_args}",
     )
+
+
+def _remove_dns_record(host: str) -> bool:
+    """Remove a *.internal record from gateway dnsmasq hosts file by hostname.
+    Returns True if the record was present and removed. Caller reloads dnsmasq."""
+    check_cmd = (
+        f"grep -qE '[[:space:]]{re.escape(host)}([[:space:]]|$)' "
+        f"{shlex.quote(GATEWAY_DNS_HOSTS)} && echo present || echo absent"
+    )
+    if ssh_run(GATEWAY_HOST, "sh", "-c", check_cmd).strip() != "present":
+        return False
+    rewrite = (
+        f"tmp=$(mktemp) && "
+        f"grep -vE '[[:space:]]{re.escape(host)}([[:space:]]|$)' "
+        f"{shlex.quote(GATEWAY_DNS_HOSTS)} > $tmp && "
+        f"mv $tmp {shlex.quote(GATEWAY_DNS_HOSTS)}"
+    )
+    ssh_run(GATEWAY_HOST, "sh", "-c", rewrite)
+    return True
+
+
+def _find_dns_records_by_ip(vm_ip: str) -> list[dict]:
+    """Records on gateway dnsmasq whose first column matches vm_ip."""
+    try:
+        out = ssh_run(GATEWAY_HOST, "cat", GATEWAY_DNS_HOSTS)
+    except SystemExit:
+        return []
+    records: list[dict] = []
+    for raw in out.splitlines():
+        stripped = raw.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        parts = stripped.split()
+        if len(parts) >= 2 and parts[0] == vm_ip:
+            records.append({"ip": parts[0], "host": parts[1]})
+    return records
+
+
+_CADDY_FIND_BY_IP_SCRIPT = """
+import sys, re
+path, ip = sys.argv[1], sys.argv[2]
+with open(path) as f:
+    lines = f.readlines()
+domains = []
+i = 0
+n = len(lines)
+while i < n:
+    line = lines[i]
+    stripped = line.lstrip()
+    if '{' in stripped and not stripped.startswith('#'):
+        head = stripped.split('{', 1)[0].strip()
+        if head:
+            doms = [d.strip() for d in head.split(',') if d.strip()]
+            depth = line.count('{') - line.count('}')
+            block = [line]
+            j = i + 1
+            while j < n and depth > 0:
+                depth += lines[j].count('{') - lines[j].count('}')
+                block.append(lines[j])
+                j += 1
+            if re.search(r'reverse_proxy\\s+' + re.escape(ip) + r'(:[0-9]+)?\\b', ''.join(block)):
+                domains.extend(doms)
+            i = j
+            continue
+    i += 1
+for d in domains:
+    print(d)
+"""
+
+
+def _find_caddy_domains_by_ip(vm_ip: str) -> list[str]:
+    """Caddy domain blocks whose reverse_proxy upstream resolves to vm_ip."""
+    try:
+        out = _run_remote_python(GATEWAY_HOST, _CADDY_FIND_BY_IP_SCRIPT, GATEWAY_CADDYFILE, vm_ip)
+    except SystemExit:
+        return []
+    return [d.strip() for d in out.splitlines() if d.strip()]
+
+
+def _remove_caddy_domain(domain: str) -> bool:
+    """Remove a domain block from gateway Caddyfile. Returns True if removed.
+    Caller reloads Caddy."""
+    result = _run_remote_python(GATEWAY_HOST, _CADDY_REMOVE_SCRIPT, GATEWAY_CADDYFILE, domain).strip()
+    return result == "removed"
+
+
+def _ssh_config_path() -> Path:
+    return Path("~/.ssh/config").expanduser()
+
+
+def _ssh_config_has_alias(name: str) -> bool:
+    config = _ssh_config_path()
+    if not config.exists():
+        return False
+    for line in config.read_text().splitlines():
+        stripped = line.strip()
+        if not stripped.lower().startswith("host ") or stripped.startswith("#"):
+            continue
+        if name in stripped.split()[1:]:
+            return True
+    return False
+
+
+def _remove_ssh_alias(name: str) -> dict:
+    """Strip `name` from ~/.ssh/config.
+
+    Standalone `Host <name>` block: drops the Host line and immediately-following
+    indented continuation lines, stops at the first non-indented line so adjacent
+    blocks and their preceding comments stay intact.
+
+    Shared `Host a b c` line: removes just `name` from the list, leaves the
+    block's option lines untouched.
+    """
+    config = _ssh_config_path()
+    if not config.exists():
+        return {"changed": False}
+
+    lines = config.read_text().splitlines(keepends=True)
+    out: list[str] = []
+    removed_block = False
+    edited_shared = False
+    i = 0
+    n = len(lines)
+    while i < n:
+        line = lines[i]
+        stripped = line.strip()
+        is_host = stripped.lower().startswith("host ") and not stripped.startswith("#")
+        if is_host:
+            hosts = stripped.split()[1:]
+            if name in hosts:
+                if len(hosts) == 1:
+                    i += 1
+                    while i < n and lines[i][:1] in (" ", "\t"):
+                        i += 1
+                    removed_block = True
+                    continue
+                else:
+                    remaining = [h for h in hosts if h != name]
+                    indent = line[: len(line) - len(line.lstrip())]
+                    nl = "\n" if line.endswith("\n") else ""
+                    out.append(f"{indent}Host {' '.join(remaining)}{nl}")
+                    edited_shared = True
+                    i += 1
+                    continue
+        out.append(line)
+        i += 1
+
+    if removed_block or edited_shared:
+        config.write_text("".join(out))
+        return {"changed": True, "removed_block": removed_block, "edited_shared": edited_shared}
+    return {"changed": False}
 
 
 # ── list ────────────────────────────────────────────────────────
@@ -247,14 +409,19 @@ def stop(
 
 
 # ── destroy ─────────────────────────────────────────────────────
-@app.command(help="Destroy a VM permanently — stops if running, purges disks, cleans local known_hosts.")
+@app.command(help="Destroy a VM permanently — cascades: port forwards, DNS, Caddy, SSH alias, known_hosts.")
 def destroy(
     name: str = typer.Argument(..., help="VM name or VMID"),
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation"),
 ) -> None:
     vm = find_vm(name)
     vm_ip = _vm_ip(vm["vmid"])
-    forward_port = _find_ssh_forward_port(vm_ip) if vm_ip else None
+
+    forwards = _find_forwards_to_ip(vm_ip) if vm_ip else []
+    ssh_forward_port = next((f["dport"] for f in forwards if f["target_port"] == 22), None)
+    dns_records = _find_dns_records_by_ip(vm_ip) if vm_ip else []
+    caddy_domains = _find_caddy_domains_by_ip(vm_ip) if vm_ip else []
+    has_ssh_alias = _ssh_config_has_alias(vm["name"])
 
     plan_bits = [f"DESTROY VM {vm['name']!r} (VMID {vm['vmid']})"]
     if vm_ip:
@@ -262,8 +429,20 @@ def destroy(
     if vm["status"] == "running":
         plan_bits.append("will stop first")
     plan_bits.append("disks + config purged, irreversible")
-    plan = " — ".join(plan_bits)
-    console.print(f"[red]{plan}[/]")
+    console.print(f"[red]{' — '.join(plan_bits)}[/]")
+
+    cascade: list[str] = []
+    if forwards:
+        cascade.append(f"{len(forwards)} port forward rule(s) → {vm_ip}")
+    if dns_records:
+        cascade.append(f"DNS: {', '.join(r['host'] for r in dns_records)}")
+    if caddy_domains:
+        cascade.append(f"Caddy: {', '.join(caddy_domains)}")
+    if has_ssh_alias:
+        cascade.append(f"SSH alias {vm['name']!r}")
+    if cascade:
+        console.print(f"[red]cascade cleanup: {'; '.join(cascade)}[/]")
+
     if not yes and not typer.confirm("proceed?"):
         fail("aborted", why="user did not confirm", hint="pass --yes to skip")
 
@@ -275,13 +454,36 @@ def destroy(
         "--purge", "--destroy-unreferenced-disks", "1",
     )
 
+    forwards_removed: list[dict] = []
+    for f in sorted(forwards, key=lambda x: x["line"], reverse=True):
+        ssh_run(PVE_HOST, "iptables", "-t", "nat", "-D", "PREROUTING", str(f["line"]))
+        forwards_removed.append({"dport": f["dport"], "target_port": f["target_port"]})
+    if forwards:
+        ssh_run(PVE_HOST, "sh", "-c", "iptables-save > /etc/iptables/rules.v4")
+
+    dns_removed: list[str] = []
+    for r in dns_records:
+        if _remove_dns_record(r["host"]):
+            dns_removed.append(r["host"])
+    if dns_removed:
+        _dnsmasq_reload()
+
+    caddy_removed: list[str] = []
+    for domain in caddy_domains:
+        if _remove_caddy_domain(domain):
+            caddy_removed.append(domain)
+    if caddy_removed:
+        _caddy_reload()
+
+    ssh_alias_result = _remove_ssh_alias(vm["name"]) if has_ssh_alias else {"changed": False}
+
     targets: list[str] = [vm["name"]]
     if vm_ip:
         targets.append(vm_ip)
-    if forward_port:
+    if ssh_forward_port:
         host = _pve_real_hostname()
         if host:
-            targets.append(f"[{host}]:{forward_port}")
+            targets.append(f"[{host}]:{ssh_forward_port}")
     cleaned = _clean_known_hosts(targets)
 
     emit({
@@ -289,6 +491,10 @@ def destroy(
         "name": vm["name"],
         "ip": vm_ip,
         "action": "destroy",
+        "forwards_removed": forwards_removed,
+        "dns_removed": dns_removed,
+        "caddy_removed": caddy_removed,
+        "ssh_alias_removed": ssh_alias_result.get("changed", False),
         "known_hosts_cleaned": cleaned,
     })
 
@@ -299,18 +505,7 @@ def ssh_cmd(
     name: str = typer.Argument(..., help="VM name (must match ~/.ssh/config Host alias)"),
     command: Optional[list[str]] = typer.Argument(None, help="Optional remote command"),
 ) -> None:
-    ssh_config = Path("~/.ssh/config").expanduser()
-    has_alias = False
-    if ssh_config.exists():
-        for line in ssh_config.read_text().splitlines():
-            stripped = line.strip()
-            if stripped.startswith("#") or not stripped.lower().startswith("host "):
-                continue
-            hosts = stripped.split(None, 1)[1].split()
-            if name in hosts:
-                has_alias = True
-                break
-    if not has_alias:
+    if not _ssh_config_has_alias(name):
         fail(
             f"no SSH alias {name!r} in ~/.ssh/config",
             why="aliases are the source of truth for VM connectivity",
@@ -448,26 +643,12 @@ def dns(
         fail("host required", hint="utils pve dns <hostname> ...")
 
     if action == "remove":
-        # check present
-        check_cmd = (
-            f"grep -qE '[[:space:]]{re.escape(host)}([[:space:]]|$)' "
-            f"{shlex.quote(GATEWAY_DNS_HOSTS)} && echo present || echo absent"
-        )
-        present = ssh_run(GATEWAY_HOST, "sh", "-c", check_cmd).strip()
-        if present != "present":
-            emit({"host": host, "action": "skipped", "reason": "not in hosts file"})
-            return
         if not yes and not typer.confirm(f"remove DNS record for {host!r}?"):
             fail("aborted", why="user did not confirm", hint="pass --yes to skip")
-        # rewrite without matching lines, then reload
-        rewrite = (
-            f"tmp=$(mktemp) && "
-            f"grep -vE '[[:space:]]{re.escape(host)}([[:space:]]|$)' "
-            f"{shlex.quote(GATEWAY_DNS_HOSTS)} > $tmp && "
-            f"mv $tmp {shlex.quote(GATEWAY_DNS_HOSTS)}"
-        )
-        ssh_run(GATEWAY_HOST, "sh", "-c", rewrite)
-        ssh_run(GATEWAY_HOST, "sudo", "systemctl", "reload", "dnsmasq")
+        if not _remove_dns_record(host):
+            emit({"host": host, "action": "skipped", "reason": "not in hosts file"})
+            return
+        _dnsmasq_reload()
         emit({"host": host, "action": "removed"})
         return
 
@@ -554,8 +735,7 @@ def caddy(
     if action == "remove":
         if not yes and not typer.confirm(f"remove Caddy block for {domain!r}?"):
             fail("aborted", why="user did not confirm", hint="pass --yes to skip")
-        result = _run_remote_python(GATEWAY_HOST, _CADDY_REMOVE_SCRIPT, GATEWAY_CADDYFILE, domain).strip()
-        if result == "not_found":
+        if not _remove_caddy_domain(domain):
             emit({"domain": domain, "action": "skipped", "reason": "domain not in Caddyfile"})
             return
         _caddy_reload()
