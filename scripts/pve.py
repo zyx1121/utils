@@ -177,6 +177,27 @@ def _remove_vm_firewall(vmid: int) -> bool:
     return out.strip() == "done"
 
 
+# Persist the forward rules for reboot WITHOUT freezing daemon-managed state.
+# A blanket `iptables-save` would capture pve-firewall's 150+ filter chains and
+# the SDN SNAT into rules.v4, which then fight the daemons that rebuild them on
+# boot. Every forward we manage lives in the nat table (which carries no firewall
+# chains), so we refresh only the *nat block and leave the rest of rules.v4 — the
+# host's static *filter security rules — untouched. The SDN SNAT (`-j SNAT
+# --to-source`) is dropped since SDN re-adds it on boot.
+_PERSIST_IPTABLES_SH = r"""
+F=/etc/iptables/rules.v4
+tmp=$(mktemp)
+[ -f "$F" ] && awk '/^\*nat$/{n=1; next} n&&/^COMMIT$/{n=0; next} !n' "$F" > "$tmp"
+iptables-save -t nat | grep -v 'j SNAT --to-source' >> "$tmp"
+mv "$tmp" "$F"
+"""
+
+
+def _persist_iptables() -> None:
+    """Persist the nat-table forwards to rules.v4 without capturing firewall/SDN chains."""
+    ssh_run(PVE_HOST, "sh", "-c", _PERSIST_IPTABLES_SH)
+
+
 def _find_forwards_to_ip(vm_ip: str) -> list[dict]:
     """Scan PVE iptables PREROUTING for DNAT rules targeting vm_ip.
     Returns [{"line": N, "dport": host_port, "target_port": vm_port}, ...]."""
@@ -511,7 +532,7 @@ def destroy(
         ssh_run(PVE_HOST, "iptables", "-t", "nat", "-D", "PREROUTING", str(f["line"]))
         forwards_removed.append({"dport": f["dport"], "target_port": f["target_port"]})
     if forwards:
-        ssh_run(PVE_HOST, "sh", "-c", "iptables-save > /etc/iptables/rules.v4")
+        _persist_iptables()
 
     dns_removed: list[str] = []
     for r in dns_records:
@@ -649,7 +670,7 @@ def clone(
             "-p", "tcp", "--dport", str(forward_port),
             "-j", "DNAT", "--to", f"{ip}:22",
         )
-        ssh_run(PVE_HOST, "sh", "-c", "iptables-save > /etc/iptables/rules.v4")
+        _persist_iptables()
 
     emit({
         "vmid": new_vmid,
@@ -691,7 +712,7 @@ def forward(
         if line is None:
             fail("--line required for del", hint="run `utils pve forward --action list` to find the line number")
         ssh_run(PVE_HOST, "iptables", "-t", "nat", "-D", "PREROUTING", str(line))
-        ssh_run(PVE_HOST, "sh", "-c", "iptables-save > /etc/iptables/rules.v4")
+        _persist_iptables()
         emit({"action": "del", "line": line})
         return
 
@@ -710,7 +731,7 @@ def forward(
         "-p", "tcp", "--dport", host_port,
         "-j", "DNAT", "--to", f"{vm_ip}:{vm_port}",
     )
-    ssh_run(PVE_HOST, "sh", "-c", "iptables-save > /etc/iptables/rules.v4")
+    _persist_iptables()
     emit({"action": "add", "host_port": int(host_port), "vm_ip": vm_ip, "vm_port": int(vm_port)})
 
 
