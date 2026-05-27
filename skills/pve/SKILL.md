@@ -25,7 +25,7 @@ utils pve ssh <name> [cmd]         # SSH via alias; refuses if alias missing
 utils pve start <name>
 utils pve stop <name> [-y]
 utils pve destroy <name> [-y]                  # cascades: VM + forwards/DNS/Caddy/SSH alias/known_hosts
-utils pve clone <name> [--ip 10.10.10.42] [--vmid 113] [--cores 4] [--ram 4096] [--disk 100] [--no-forward]
+utils pve clone <name> [--ip 10.10.10.42] [--vmid 113] [--cores 4] [--ram 4096] [--disk 100] [--no-forward] [--no-isolate]
 utils pve forward 8443:10.10.10.42:443         # add
 utils pve forward --action list
 utils pve forward --action del --line 3
@@ -42,10 +42,12 @@ utils pve caddy --action list
 ## Decision rules
 
 - **Never bypass the dispatcher with hardcoded IP/port.** If `ssh <name>` fails, the alias is missing — fix the alias, don't write a raw `ssh -p ... user@<ip>` workaround.
-- **Defaults come from env vars** (`UTILS_PVE_HOST`, `UTILS_PVE_GATEWAY`, `UTILS_PVE_TEMPLATE`, `UTILS_PVE_GATEWAY_IP`, `UTILS_PVE_GATEWAY_DNS`, `UTILS_PVE_GATEWAY_CADDY`). Loki's conventions are the fallback; other operators set their own.
+- **Defaults come from env vars** (`UTILS_PVE_HOST`, `UTILS_PVE_GATEWAY`, `UTILS_PVE_TEMPLATE`, `UTILS_PVE_GATEWAY_IP`, `UTILS_PVE_GATEWAY_DNS`, `UTILS_PVE_GATEWAY_CADDY`, `UTILS_PVE_BRIDGE`, `UTILS_PVE_FW_GROUP`). Loki's conventions are the fallback; other operators set their own.
+- **New VMs are isolated by default.** `clone` puts the VM on `UTILS_PVE_BRIDGE` (default `vnet10`, a PVE SDN VNet) and applies `firewall=1` + the `UTILS_PVE_FW_GROUP` security group (default `spoke`) **before first boot** — it comes up fenced off from its peers, never momentarily open. `spoke` is egress-only: a VM can reach the subnet gateway + DNS + internet but **not** other VMs (hub-and-spoke; the edge gateway is the hub and is not isolated). Pass `--no-isolate` for a VM that legitimately needs east-west reach. Inbound stays open (`policy_in ACCEPT`) so the SSH forward and reverse-proxy reach keep working.
+- **Isolation has a one-time host prerequisite** (not done by `clone`): the PVE firewall master switch + the `spoke` group must exist in `/etc/pve/firewall/cluster.fw`, and the internal network must be the SDN VNet with SNAT (PVE-managed NAT — hand-rolled `iptables MASQUERADE` is incompatible with per-VM firewall, the firewall bridge breaks it). Set `UTILS_PVE_FW_GROUP=""` to disable isolation entirely on hosts without this setup.
 - **Run the provisioning chain directly from the main agent — no sub-agent.** clone → DNS → forward → SSH alias edit → smoke test is 4-5 commands; spawning another agent for that is pure overhead. This dispatcher is already the abstraction layer.
 - **Stop / destroy / forward del / dns remove / caddy remove** are destructive. Confirm with the user, even when the agent has free rein on safe ops.
-- **`destroy` cascades by design.** After purging the VM it sweeps every related ref it can find by VM IP: matching `iptables` PREROUTING rules, dnsmasq hosts records, Caddy domain blocks whose `reverse_proxy` upstream resolves to that IP, the `Host <name>` entry in local `~/.ssh/config` (standalone block or name inside a shared `Host a b c` list), and finally local `~/.ssh/known_hosts` (by VM name, IP, and the `[pve-host]:port` entry if a `:22` forward existed). The pre-confirm plan shows the full cascade list — read it before saying yes. Anything not found is skipped silently.
+- **`destroy` cascades by design.** After purging the VM it sweeps every related ref it can find by VM IP: matching `iptables` PREROUTING rules, dnsmasq hosts records, Caddy domain blocks whose `reverse_proxy` upstream resolves to that IP, the `Host <name>` entry in local `~/.ssh/config` (standalone block or name inside a shared `Host a b c` list), the per-VM firewall config `/etc/pve/firewall/<vmid>.fw`, and finally local `~/.ssh/known_hosts` (by VM name, IP, and the `[pve-host]:port` entry if a `:22` forward existed). The pre-confirm plan shows the full cascade list — read it before saying yes. Anything not found is skipped silently.
 - **VMID / IP / SSH port are bound by convention — compute, don't ask.** Default assignment when the user just gives a name (+ optional RAM / disk):
   - **VMID** = next free ID `≥100` (smallest gap, not `max+1`). Run `utils pve list` first to see allocated IDs.
   - **IP** = `10.10.10.<VMID>` — last octet always equals VMID.
@@ -69,7 +71,7 @@ utils pve dns parser.internal 10.10.10.42              # internal .internal reso
 ssh -o StrictHostKeyChecking=accept-new parser echo ok # smoke test (first-run host key accept)
 ```
 
-`clone` derives `--ip` from `<subnet>.<VMID>` when omitted and auto-adds the `50<VMID>:22` forward. Pass `--no-forward` if the VM shouldn't have external SSH. The output's `ssh_alias_block` and `ssh_alias_note` fields tell you exactly what to add to `~/.ssh/config`.
+`clone` derives `--ip` from `<subnet>.<VMID>` when omitted, auto-adds the `50<VMID>:22` forward, and bakes in east-west isolation (bridge + `firewall=1` + `spoke` group). Pass `--no-forward` if the VM shouldn't have external SSH, `--no-isolate` if it needs to reach other VMs. The output's `ssh_alias_block` and `ssh_alias_note` fields tell you exactly what to add to `~/.ssh/config`.
 
 **Expose a VM service externally:**
 
