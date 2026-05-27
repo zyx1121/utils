@@ -52,9 +52,8 @@ PVE_TEMPLATE = int(os.environ.get("UTILS_PVE_TEMPLATE", "9000"))
 GATEWAY_IP = os.environ.get("UTILS_PVE_GATEWAY_IP", "10.10.10.1")
 GATEWAY_DNS_HOSTS = os.environ.get("UTILS_PVE_GATEWAY_DNS", "/home/user/gateway/dns/hosts")
 GATEWAY_CADDYFILE = os.environ.get("UTILS_PVE_GATEWAY_CADDY", "/home/user/gateway/Caddyfile")
-GATEWAY_CADDY_COMPOSE_DIR = os.environ.get("UTILS_PVE_GATEWAY_CADDY_COMPOSE", "/home/user/gateway")
-GATEWAY_CADDY_SERVICE = os.environ.get("UTILS_PVE_GATEWAY_CADDY_SERVICE", "caddy")
-GATEWAY_CADDY_CONTAINER_CONFIG = os.environ.get("UTILS_PVE_GATEWAY_CADDY_CONTAINER_CONFIG", "/etc/caddy/Caddyfile")
+# Gateway runs Caddy natively under systemd (ex-docker). Override for other setups.
+CADDY_RELOAD_CMD = os.environ.get("UTILS_PVE_CADDY_RELOAD", "sudo systemctl reload caddy")
 VM_BRIDGE = os.environ.get("UTILS_PVE_BRIDGE", "vnet10")
 # PVE firewall security group applied to every cloned VM for east-west isolation.
 # Empty disables isolation entirely. The group + datacenter master switch are a
@@ -244,13 +243,8 @@ def _clean_known_hosts(targets: list[str]) -> list[str]:
 
 
 def _caddy_reload() -> None:
-    """Reload Caddy via the dockerised gateway service."""
-    ssh_run(
-        GATEWAY_HOST, "sh", "-c",
-        f"cd {shlex.quote(GATEWAY_CADDY_COMPOSE_DIR)} && "
-        f"docker compose exec -T {shlex.quote(GATEWAY_CADDY_SERVICE)} "
-        f"caddy reload --config {shlex.quote(GATEWAY_CADDY_CONTAINER_CONFIG)}",
-    )
+    """Reload Caddy on the gateway (native systemd; CADDY_RELOAD_CMD)."""
+    ssh_run(GATEWAY_HOST, "sh", "-c", CADDY_RELOAD_CMD)
 
 
 def _dnsmasq_reload() -> None:
@@ -277,11 +271,14 @@ def _remove_dns_record(host: str) -> bool:
     )
     if ssh_run(GATEWAY_HOST, "sh", "-c", check_cmd).strip() != "present":
         return False
+    # chmod 644 after mv: mktemp creates 600, but dnsmasq (drops to its own
+    # user) must be able to read the addn-hosts file. DNS records aren't secret.
     rewrite = (
         f"tmp=$(mktemp) && "
         f"grep -vE '[[:space:]]{re.escape(host)}([[:space:]]|$)' "
         f"{shlex.quote(GATEWAY_DNS_HOSTS)} > $tmp && "
-        f"mv $tmp {shlex.quote(GATEWAY_DNS_HOSTS)}"
+        f"mv $tmp {shlex.quote(GATEWAY_DNS_HOSTS)} && "
+        f"chmod 644 {shlex.quote(GATEWAY_DNS_HOSTS)}"
     )
     ssh_run(GATEWAY_HOST, "sh", "-c", rewrite)
     return True
@@ -790,7 +787,9 @@ def dns(
     if not yes and not typer.confirm("proceed?"):
         fail("aborted", why="user did not confirm", hint="pass --yes to skip")
 
-    ssh_run(GATEWAY_HOST, "sh", "-c", f"echo {shlex.quote(f'{ip} {host}')} >> {shlex.quote(GATEWAY_DNS_HOSTS)}")
+    ssh_run(GATEWAY_HOST, "sh", "-c",
+            f"echo {shlex.quote(f'{ip} {host}')} >> {shlex.quote(GATEWAY_DNS_HOSTS)} && "
+            f"chmod 644 {shlex.quote(GATEWAY_DNS_HOSTS)}")
     ssh_run(GATEWAY_HOST, "sudo", "systemctl", "reload", "dnsmasq")
     emit({"host": host, "ip": ip, "action": "added"})
 
