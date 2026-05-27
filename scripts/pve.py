@@ -55,6 +55,11 @@ GATEWAY_CADDYFILE = os.environ.get("UTILS_PVE_GATEWAY_CADDY", "/home/user/gatewa
 GATEWAY_CADDY_COMPOSE_DIR = os.environ.get("UTILS_PVE_GATEWAY_CADDY_COMPOSE", "/home/user/gateway")
 GATEWAY_CADDY_SERVICE = os.environ.get("UTILS_PVE_GATEWAY_CADDY_SERVICE", "caddy")
 GATEWAY_CADDY_CONTAINER_CONFIG = os.environ.get("UTILS_PVE_GATEWAY_CADDY_CONTAINER_CONFIG", "/etc/caddy/Caddyfile")
+VM_BRIDGE = os.environ.get("UTILS_PVE_BRIDGE", "vnet10")
+# PVE firewall security group applied to every cloned VM for east-west isolation.
+# Empty disables isolation entirely. The group + datacenter master switch are a
+# one-time host setup (see SKILL.md); clone only references the group per-VM.
+FW_GROUP = os.environ.get("UTILS_PVE_FW_GROUP", "spoke")
 
 app = typer.Typer(
     no_args_is_help=True,
@@ -123,6 +128,53 @@ def _vm_ip(vmid: int) -> Optional[str]:
             if m:
                 return m.group(1)
     return None
+
+
+def _set_net0(vmid: int, *, bridge: Optional[str] = None, firewall: Optional[bool] = None) -> None:
+    """Re-set net0 overriding bridge/firewall while preserving model=mac + other opts.
+
+    qm clone assigns a fresh MAC, so we read the generated net0 back and patch it
+    in place rather than reconstructing it (which would lose the MAC)."""
+    cfg = ssh_run(PVE_HOST, "qm", "config", str(vmid))
+    net0 = next((l.split(":", 1)[1].strip() for l in cfg.splitlines() if l.startswith("net0:")), None)
+    if net0 is None:
+        fail(f"VM {vmid} has no net0", hint="template must define a network interface")
+    order: list[str] = []
+    kv: dict[str, Optional[str]] = {}
+    for part in net0.split(","):
+        k, sep, v = part.partition("=")
+        kv[k] = v if sep else None
+        order.append(k)
+    if bridge is not None:
+        if "bridge" not in kv:
+            order.append("bridge")
+        kv["bridge"] = bridge
+    if firewall is not None:
+        if "firewall" not in kv:
+            order.append("firewall")
+        kv["firewall"] = "1" if firewall else "0"
+    spec = ",".join(k if kv[k] is None else f"{k}={kv[k]}" for k in order)
+    ssh_run(PVE_HOST, "qm", "set", str(vmid), "-net0", spec)
+
+
+def _write_vm_firewall(vmid: int, group: str) -> None:
+    """Write /etc/pve/firewall/<vmid>.fw applying `group` (egress isolation).
+
+    policy_in ACCEPT keeps inbound open (SSH forward + reverse-proxy reach); the
+    group's OUT rules are what actually fence the VM off from its peers."""
+    fw = (
+        "[OPTIONS]\nenable: 1\npolicy_in: ACCEPT\npolicy_out: ACCEPT\n\n"
+        f"[RULES]\nGROUP {group}\n"
+    )
+    ssh_run(PVE_HOST, "sh", "-c",
+            f"printf %s {shlex.quote(fw)} > {shlex.quote(f'/etc/pve/firewall/{vmid}.fw')}")
+
+
+def _remove_vm_firewall(vmid: int) -> bool:
+    """Delete /etc/pve/firewall/<vmid>.fw. Returns True if it existed."""
+    out = ssh_run(PVE_HOST, "sh", "-c",
+                  f"rm -f {shlex.quote(f'/etc/pve/firewall/{vmid}.fw')} && echo done")
+    return out.strip() == "done"
 
 
 def _find_forwards_to_ip(vm_ip: str) -> list[dict]:
@@ -475,6 +527,8 @@ def destroy(
     if caddy_removed:
         _caddy_reload()
 
+    firewall_removed = _remove_vm_firewall(vm["vmid"])
+
     ssh_alias_result = _remove_ssh_alias(vm["name"]) if has_ssh_alias else {"changed": False}
 
     targets: list[str] = [vm["name"]]
@@ -494,6 +548,7 @@ def destroy(
         "forwards_removed": forwards_removed,
         "dns_removed": dns_removed,
         "caddy_removed": caddy_removed,
+        "firewall_removed": firewall_removed,
         "ssh_alias_removed": ssh_alias_result.get("changed", False),
         "known_hosts_cleaned": cleaned,
     })
@@ -530,6 +585,7 @@ def clone(
     ram: Optional[int] = typer.Option(None, "--ram", help="Override template RAM (MB)"),
     disk: Optional[int] = typer.Option(None, "--disk", help="Resize scsi0 to N GB (must be ≥ template size)"),
     no_forward: bool = typer.Option(False, "--no-forward", help="Skip the auto-added 50<vmid>:22 external SSH forward"),
+    no_isolate: bool = typer.Option(False, "--no-isolate", help=f"Skip east-west isolation (firewall=1 + {FW_GROUP!r} group)"),
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation"),
 ) -> None:
     existing = {v["vmid"] for v in parse_qm_list(ssh_run(PVE_HOST, "qm", "list"))}
@@ -554,8 +610,9 @@ def clone(
 
     forward_port = 50000 + new_vmid
     add_forward = not no_forward and 1 <= forward_port <= 65535
+    isolate = not no_isolate and bool(FW_GROUP)
 
-    plan = f"clone template {template} → VMID {new_vmid} as {name!r}, IP {ip}/24, gw {GATEWAY_IP}"
+    plan = f"clone template {template} → VMID {new_vmid} as {name!r}, IP {ip}/24, gw {GATEWAY_IP}, bridge {VM_BRIDGE}"
     if cores:
         plan += f", cores {cores}"
     if ram:
@@ -564,6 +621,8 @@ def clone(
         plan += f", disk {disk}GB"
     if add_forward:
         plan += f", SSH forward :{forward_port}→{ip}:22"
+    if isolate:
+        plan += f", isolated (firewall=1 + {FW_GROUP!r})"
     console.print(plan)
     if not yes and not typer.confirm("proceed?"):
         fail("aborted", why="user did not confirm", hint="pass --yes to skip")
@@ -576,6 +635,11 @@ def clone(
         ssh_run(PVE_HOST, "qm", "set", str(new_vmid), "--memory", str(ram))
     if disk:
         ssh_run(PVE_HOST, "qm", "resize", str(new_vmid), "scsi0", f"{disk}G")
+    # Bridge + isolation are baked in before first boot: the VM comes up on the
+    # right network already fenced off from its peers, never momentarily open.
+    _set_net0(new_vmid, bridge=VM_BRIDGE, firewall=isolate)
+    if isolate:
+        _write_vm_firewall(new_vmid, FW_GROUP)
     ssh_run(PVE_HOST, "qm", "start", str(new_vmid))
 
     if add_forward:
@@ -591,6 +655,9 @@ def clone(
         "vmid": new_vmid,
         "name": name,
         "ip": ip,
+        "bridge": VM_BRIDGE,
+        "isolated": isolate,
+        "firewall_group": FW_GROUP if isolate else None,
         "cores": cores,
         "ram_mb": ram,
         "disk_gb": disk,
