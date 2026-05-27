@@ -100,29 +100,54 @@ def parse_qm_list(output: str) -> list[dict]:
                 "name": parts[1],
                 "status": parts[2],
                 "mem_mb": int(parts[3]),
+                "type": "qm",
             })
         except ValueError:
             continue
     return vms
 
 
-def find_vm(name_or_id: str) -> dict:
-    vms = parse_qm_list(ssh_run(PVE_HOST, "qm", "list"))
-    for vm in vms:
-        if vm["name"] == name_or_id or str(vm["vmid"]) == name_or_id:
-            return vm
+def parse_pct_list(output: str) -> list[dict]:
+    """Parse `pct list` table. Header: VMID Status Lock Name (Lock may be empty)."""
+    lines = output.strip().splitlines()
+    cts = []
+    for line in lines[1:]:
+        parts = line.split()
+        if len(parts) < 3:
+            continue
+        try:
+            # Name is the last column; Lock between Status and Name may be absent.
+            cts.append({"vmid": int(parts[0]), "name": parts[-1], "status": parts[1], "type": "lxc"})
+        except ValueError:
+            continue
+    return cts
+
+
+def list_guests() -> list[dict]:
+    """All guests on the host — QEMU VMs (`qm`) + LXC containers (`pct`)."""
+    return (parse_qm_list(ssh_run(PVE_HOST, "qm", "list"))
+            + parse_pct_list(ssh_run(PVE_HOST, "pct", "list")))
+
+
+def find_guest(name_or_id: str) -> dict:
+    """Find a VM or LXC by name/VMID. Returns dict with `type` = qm | lxc."""
+    for g in list_guests():
+        if g["name"] == name_or_id or str(g["vmid"]) == name_or_id:
+            return g
     fail(
-        f"no VM named {name_or_id!r}",
-        why="not in `qm list`",
-        hint="run `utils pve list` to see all VMs",
+        f"no VM or container named {name_or_id!r}",
+        why="not in `qm list` or `pct list`",
+        hint="run `utils pve list` to see all guests",
     )
 
 
-def _vm_ip(vmid: int) -> Optional[str]:
-    """Extract the VM's IP from `qm config ... ipconfig0`. None if unset."""
-    config_out = ssh_run(PVE_HOST, "qm", "config", str(vmid))
+def _vm_ip(vmid: int, gtype: str = "qm") -> Optional[str]:
+    """Extract a guest's IP. VM: `qm config` ipconfig0; LXC: `pct config` net0. None if unset."""
+    cli = "pct" if gtype == "lxc" else "qm"
+    key = "net0:" if gtype == "lxc" else "ipconfig0:"
+    config_out = ssh_run(PVE_HOST, cli, "config", str(vmid))
     for line in config_out.splitlines():
-        if line.startswith("ipconfig0:"):
+        if line.startswith(key):
             m = re.search(r"ip=([\d.]+)", line)
             if m:
                 return m.group(1)
@@ -417,32 +442,36 @@ def _remove_ssh_alias(name: str) -> dict:
 
 
 # ── list ────────────────────────────────────────────────────────
-@app.command("list", help="List all VMs on the PVE host.")
+@app.command("list", help="List all guests on the PVE host — QEMU VMs + LXC containers.")
 def list_vms() -> None:
-    vms = parse_qm_list(ssh_run(PVE_HOST, "qm", "list"))
+    guests = list_guests()
 
     def human(data, _meta):
         t = Table(show_header=True, header_style="bold")
         t.add_column("VMID")
         t.add_column("Name")
+        t.add_column("Type")
         t.add_column("Status")
         t.add_column("Mem")
         for v in data:
             style = "green" if v["status"] == "running" else "dim"
-            t.add_row(str(v["vmid"]), v["name"], v["status"], f"{v['mem_mb']}MB", style=style)
+            mem = f"{v['mem_mb']}MB" if v.get("mem_mb") else "-"
+            t.add_row(str(v["vmid"]), v["name"], v["type"], v["status"], mem, style=style)
         console.print(t)
 
-    emit(vms, {"count": len(vms), "host": PVE_HOST}, human=human)
+    emit(guests, {"count": len(guests), "host": PVE_HOST}, human=human)
 
 
 # ── status ──────────────────────────────────────────────────────
-@app.command(help="Show config + status for a VM by name or VMID.")
-def status(name: str = typer.Argument(..., help="VM name or VMID")) -> None:
-    vm = find_vm(name)
-    config_out = ssh_run(PVE_HOST, "qm", "config", str(vm["vmid"]))
-    info = {"vmid": vm["vmid"], "name": vm["name"], "status": vm["status"]}
+@app.command(help="Show config + status for a VM or container by name or VMID.")
+def status(name: str = typer.Argument(..., help="VM/CT name or VMID")) -> None:
+    vm = find_guest(name)
+    cli = "pct" if vm["type"] == "lxc" else "qm"
+    config_out = ssh_run(PVE_HOST, cli, "config", str(vm["vmid"]))
+    info = {"vmid": vm["vmid"], "name": vm["name"], "type": vm["type"], "status": vm["status"]}
     keep = {"cores", "memory", "ostype", "ipconfig0", "ciuser",
-            "nameserver", "searchdomain", "net0", "scsi0"}
+            "nameserver", "searchdomain", "net0", "scsi0",
+            "hostname", "rootfs", "onboot"}  # rootfs/hostname/onboot for LXC
     for line in config_out.splitlines():
         if ":" not in line:
             continue
@@ -459,23 +488,25 @@ def status(name: str = typer.Argument(..., help="VM name or VMID")) -> None:
 
 
 # ── start / stop ────────────────────────────────────────────────
-@app.command(help="Start a VM.")
-def start(name: str = typer.Argument(..., help="VM name or VMID")) -> None:
-    vm = find_vm(name)
-    ssh_run(PVE_HOST, "qm", "start", str(vm["vmid"]))
-    emit({"vmid": vm["vmid"], "name": vm["name"], "action": "start"})
+@app.command(help="Start a VM or container.")
+def start(name: str = typer.Argument(..., help="VM/CT name or VMID")) -> None:
+    vm = find_guest(name)
+    cli = "pct" if vm["type"] == "lxc" else "qm"
+    ssh_run(PVE_HOST, cli, "start", str(vm["vmid"]))
+    emit({"vmid": vm["vmid"], "name": vm["name"], "type": vm["type"], "action": "start"})
 
 
-@app.command(help="Stop a VM (graceful shutdown).")
+@app.command(help="Stop a VM or container.")
 def stop(
-    name: str = typer.Argument(..., help="VM name or VMID"),
+    name: str = typer.Argument(..., help="VM/CT name or VMID"),
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation"),
 ) -> None:
-    vm = find_vm(name)
-    if not yes and not typer.confirm(f"stop VM {vm['name']!r} (VMID {vm['vmid']})?"):
+    vm = find_guest(name)
+    cli = "pct" if vm["type"] == "lxc" else "qm"
+    if not yes and not typer.confirm(f"stop {vm['type']} {vm['name']!r} (VMID {vm['vmid']})?"):
         fail("aborted", why="user did not confirm", hint="pass --yes to skip")
-    ssh_run(PVE_HOST, "qm", "stop", str(vm["vmid"]))
-    emit({"vmid": vm["vmid"], "name": vm["name"], "action": "stop"})
+    ssh_run(PVE_HOST, cli, "stop", str(vm["vmid"]))
+    emit({"vmid": vm["vmid"], "name": vm["name"], "type": vm["type"], "action": "stop"})
 
 
 # ── destroy ─────────────────────────────────────────────────────
@@ -484,8 +515,9 @@ def destroy(
     name: str = typer.Argument(..., help="VM name or VMID"),
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation"),
 ) -> None:
-    vm = find_vm(name)
-    vm_ip = _vm_ip(vm["vmid"])
+    vm = find_guest(name)
+    cli = "pct" if vm["type"] == "lxc" else "qm"
+    vm_ip = _vm_ip(vm["vmid"], vm["type"])
 
     forwards = _find_forwards_to_ip(vm_ip) if vm_ip else []
     ssh_forward_port = next((f["dport"] for f in forwards if f["target_port"] == 22), None)
@@ -493,7 +525,7 @@ def destroy(
     caddy_domains = _find_caddy_domains_by_ip(vm_ip) if vm_ip else []
     has_ssh_alias = _ssh_config_has_alias(vm["name"])
 
-    plan_bits = [f"DESTROY VM {vm['name']!r} (VMID {vm['vmid']})"]
+    plan_bits = [f"DESTROY {vm['type']} {vm['name']!r} (VMID {vm['vmid']})"]
     if vm_ip:
         plan_bits.append(f"IP {vm_ip}")
     if vm["status"] == "running":
@@ -517,10 +549,10 @@ def destroy(
         fail("aborted", why="user did not confirm", hint="pass --yes to skip")
 
     if vm["status"] == "running":
-        ssh_run(PVE_HOST, "qm", "stop", str(vm["vmid"]))
+        ssh_run(PVE_HOST, cli, "stop", str(vm["vmid"]))
 
     ssh_run(
-        PVE_HOST, "qm", "destroy", str(vm["vmid"]),
+        PVE_HOST, cli, "destroy", str(vm["vmid"]),
         "--purge", "--destroy-unreferenced-disks", "1",
     )
 

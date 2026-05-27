@@ -12,12 +12,12 @@ Atomic operations against the PVE host and the edge gateway through SSH aliases.
 ## Read commands
 
 ```bash
-utils pve list                     # all VMs + status (table on TTY, JSON in pipes)
-utils pve status <name>            # config + state for one VM
+utils pve list                     # all guests: QEMU VMs + LXC containers + status (table on TTY, JSON in pipes)
+utils pve status <name>            # config + state for one guest
 utils pve ssh <name> [cmd]         # SSH via alias; refuses if alias missing
 ```
 
-`utils pve list` and `status` accept either VM name or VMID. `ssh` requires the name to match a `Host` entry in `~/.ssh/config` — alias missing is treated as a real error, not a UX bug.
+`list` / `status` / `start` / `stop` / `destroy` are **guest-type-aware** — they resolve a name/VMID against both `qm list` (VMs) and `pct list` (LXC containers) and dispatch the right CLI (`qm` vs `pct`). The `type` field (`qm` | `lxc`) is in the JSON. `clone` is VM-only (clones the QEMU template). `ssh` requires the name to match a `Host` entry in `~/.ssh/config` — alias missing is treated as a real error, not a UX bug.
 
 ## Write commands
 
