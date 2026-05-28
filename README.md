@@ -133,8 +133,9 @@ Three layers, kept separate so the cheap thing stays cheap:
 bin/
 └── utils                       dispatcher — exec uv run on the right script
 hooks/
-├── hooks.json                  PostToolUse(Write|Bash) → observe.py
-└── observe.py                  append-only jsonl logger
+├── hooks.json                  PostToolUse → observe; Stop / Notification → ping
+├── observe.py                  append-only jsonl logger
+└── ping.sh                     plays a random sound from ~/.claude/ping/ on turn-end / attention
 lib/
 └── _envelope.py                shared output helpers — emit / fail / parse_host
 skills/
