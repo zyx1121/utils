@@ -18,7 +18,7 @@ Agent-first CLI toolbox. Hooks watch the throwaway scripts your agent writes, pr
 /plugin install utils@zyx1121
 ```
 
-Prerequisite: [`uv`](https://docs.astral.sh/uv/) on PATH. After install, the hook starts logging to `~/.claude/data/utils/observations.jsonl`.
+Prerequisite: [`uv`](https://docs.astral.sh/uv/) on PATH. After install, two hooks start writing local-only jsonl logs under `~/.claude/data/utils/` — `observations.jsonl` (ad-hoc script activity) and `events/YYYY-MM-DD.jsonl` (session + skill / agent invocations). Both stay on disk; nothing is uploaded.
 
 ## What's inside
 
@@ -126,6 +126,31 @@ Three layers, kept separate so the cheap thing stays cheap:
 - **Analyze** (`/utils:review` skill) — read the log, cluster semantically, present candidates as a table. You decide which to promote.
 - **Promote** (`utils-promoter` agent) — write the new script, open a PR. You merge.
 
+## Session events
+
+A second hook (`events.py`) covers a different question than the throwaway-script lifecycle above: *what happened in this session* — which skills fired, which subagents got spawned, when sessions started and stopped. One record per event, one file per UTC day:
+
+```
+~/.claude/data/utils/events/YYYY-MM-DD.jsonl
+```
+
+Schema is intentionally narrow — only metadata, never the skill arguments, agent prompts, or any file contents touched. That's the privacy boundary: skip them at write time, not redact at read time.
+
+Captured:
+
+- `SessionStart` / `Stop` → `{kind:"session", phase, session, cwd, source}`
+- `PostToolUse` for `Skill` / `Task` only → `{kind:"tool", tool, name|subagent, ok}`
+
+Opt out by creating `~/.claude/utils.local.md`:
+
+```markdown
+---
+observe: off
+---
+```
+
+The hook returns early when this is present. Remove the file or set `observe: full` to re-enable. Daily files give natural rotation (`find … -mtime +30 -delete` works), and sync across machines is just `rsync` of that directory.
+
 ## Layout
 
 ```
@@ -133,8 +158,9 @@ Three layers, kept separate so the cheap thing stays cheap:
 bin/
 └── utils                       dispatcher — exec uv run on the right script
 hooks/
-├── hooks.json                  PostToolUse → observe; Stop / Notification → ping
-├── observe.py                  append-only jsonl logger
+├── hooks.json                  PostToolUse → observe / events; SessionStart + Stop → events; Stop / Notification → ping
+├── observe.py                  append-only jsonl logger — throwaway script activity (Write / Bash)
+├── events.py                   append-only jsonl logger — session + Skill / Task (metadata only, opt-out via utils.local.md)
 └── ping.sh                     plays a random sound from ~/.claude/ping/ on turn-end / attention
 lib/
 └── _envelope.py                shared output helpers — emit / fail / parse_host
@@ -173,8 +199,10 @@ scripts/
 
 ```
 ~/.claude/data/utils/
-├── observations.jsonl   everything the hook saw
+├── observations.jsonl   everything observe.py saw
 ├── reviewed.jsonl       candidates already promoted or dismissed
+├── events/
+│   └── YYYY-MM-DD.jsonl session + skill / agent events (events.py)
 └── journal/
     ├── sessions/        per-session markdown summaries
     └── reports/         YYYY/MM/DD.md daily, YYYY/W<NN>.md weekly
