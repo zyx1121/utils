@@ -151,6 +151,22 @@ observe: off
 
 The hook returns early when this is present. Remove the file or set `observe: full` to re-enable. Daily files give natural rotation (`find … -mtime +30 -delete` works), and sync across machines is just `rsync` of that directory.
 
+### Statusline
+
+A one-line tally of today's activity. Add to `~/.claude/settings.json`:
+
+```json
+{ "statusLine": { "type": "command", "command": "utils statusline" } }
+```
+
+Output:
+
+```
+utils · skill 7 · task 2 · last method 12s
+```
+
+The fail counter only shows when there are any (`fail 1`). With opt-out on, output is `utils · off`; before any events fire today, `utils · no events yet`. Pure stdlib, no LLM call, reads the same `events/YYYY-MM-DD.jsonl`.
+
 ## Layout
 
 ```
@@ -191,6 +207,7 @@ agents/
 ├── session-summarizer.md       per-session journal entry writer (dispatched in parallel by /utils:session)
 └── utils-promoter.md           candidate → scripts/<name>.<ext> → PR
 scripts/
+├── statusline.py               `utils statusline` — one-line tally for Claude Code's statusLine
 └── *                           each one self-contained, exec bit + shebang
                                 (.py PEP 723, .sh, .applescript, ...)
 ```
