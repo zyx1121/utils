@@ -167,6 +167,18 @@ utils · skill 7 · task 2 · last method 12s
 
 The fail counter only shows when there are any (`fail 1`). With opt-out on, output is `utils · off`; before any events fire today, `utils · no events yet`. Pure stdlib, no LLM call, reads the same `events/YYYY-MM-DD.jsonl`.
 
+#### Themes
+
+The statusline script is a thing you tinker with — colors, layout, mascot art. The same command snapshots and switches whole looks, so an experiment never clobbers a look you liked:
+
+```
+utils statusline list                  # list themes; ● marks the live one
+utils statusline save monet -m "..."   # snapshot the live look as a theme
+utils statusline apply minimal         # switch to a saved theme
+```
+
+A theme is a full, lossless snapshot of the live `statusline-command.sh` (plus `ditto.ans` if present), stored under `<dotfiles>/.claude/statusline-themes/<name>/` so it's versioned and synced with your dotfiles. `apply` auto-backs up the current look to the reserved `_prev` theme first, so `utils statusline apply _prev` always undoes the last switch.
+
 ## Layout
 
 ```
@@ -207,7 +219,7 @@ agents/
 ├── session-summarizer.md       per-session journal entry writer (dispatched in parallel by /utils:session)
 └── utils-promoter.md           candidate → scripts/<name>.<ext> → PR
 scripts/
-├── statusline.py               `utils statusline` — one-line tally for Claude Code's statusLine
+├── statusline.py               `utils statusline` — activity tally + theme save/apply/list
 └── *                           each one self-contained, exec bit + shebang
                                 (.py PEP 723, .sh, .applescript, ...)
 ```
