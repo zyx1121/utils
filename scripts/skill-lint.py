@@ -10,19 +10,23 @@ from __future__ import annotations
 import sys as _sys
 from pathlib import Path as _Path
 _sys.path[:] = [p for p in _sys.path if _Path(p).resolve() != _Path(__file__).resolve().parent]
+# Add ../lib for shared output helpers (envelope, fail).
+_LIB = str(_Path(__file__).resolve().parent.parent / "lib")
+if _LIB not in _sys.path:
+    _sys.path.insert(0, _LIB)
 
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
 import typer
 import yaml
 from rich.console import Console
 from rich.table import Table
 
+from _envelope import emit, fail  # noqa: E402
+
 console = Console()
-err = Console(stderr=True, style="red")
 
 
 FRONTMATTER_RE = re.compile(r"^---\n(.*?)\n---\n(.*)$", re.DOTALL)
@@ -82,36 +86,46 @@ def main(
 ):
     """Lint Claude Code skills under <path>. Default path: ~/skills/ (Loki's source repo)."""
     if not path.exists():
-        err.print(f"skill-lint: {path} doesn't exist")
-        raise typer.Exit(1)
+        fail(f"{path} doesn't exist", hint="pass a directory containing */SKILL.md")
     skills = find_skills(path, recursive)
-    if not skills:
-        console.print(f"[dim](no SKILL.md found under {path})[/]")
-        return
-
     results = [(s, lint_skill(s)) for s in skills]
-    with_issues = [(s, iss) for s, iss in results if iss]
-    clean = [s for s, iss in results if not iss]
+    with_issues = [{"skill": s.parent.name, "issues": iss} for s, iss in results if iss]
+    clean = [s.parent.name for s, iss in results if not iss]
 
-    if with_issues:
-        table = Table(title=f"Skill lint · {path}", show_header=True)
-        table.add_column("skill", style="bold")
-        table.add_column("issues", style="yellow")
-        for s, iss in with_issues:
-            table.add_row(s.parent.name, " · ".join(iss))
-        console.print(table)
+    data = {
+        "scanned": len(results),
+        "with_issues": with_issues,
+        "clean": clean if verbose else [],
+    }
 
-    if verbose and clean:
-        ct = Table(title="Clean skills", show_header=True)
-        ct.add_column("skill", style="green")
-        for s in clean:
-            ct.add_row(s.parent.name)
-        console.print(ct)
+    def human(d, _meta):
+        if not skills:
+            console.print(f"[dim](no SKILL.md found under {path})[/]")
+            return
+        if d["with_issues"]:
+            table = Table(title=f"Skill lint · {path}", show_header=True)
+            table.add_column("skill", style="bold")
+            table.add_column("issues", style="yellow")
+            for row in d["with_issues"]:
+                table.add_row(row["skill"], " · ".join(row["issues"]))
+            console.print(table)
+        if verbose and clean:
+            ct = Table(title="Clean skills", show_header=True)
+            ct.add_column("skill", style="green")
+            for name in clean:
+                ct.add_row(name)
+            console.print(ct)
+        console.print(
+            f"\n[bold]{d['scanned']}[/] skills scanned · "
+            f"[yellow]{len(d['with_issues'])}[/] with issues · "
+            f"[green]{len(clean)}[/] clean"
+        )
 
-    console.print(
-        f"\n[bold]{len(results)}[/] skills scanned · "
-        f"[yellow]{len(with_issues)}[/] with issues · "
-        f"[green]{len(clean)}[/] clean"
+    emit(
+        data,
+        {"path": str(path), "scanned": len(results),
+         "issues": len(with_issues), "clean": len(clean)},
+        human=human,
     )
 
 
