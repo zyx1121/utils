@@ -15,8 +15,11 @@ from __future__ import annotations
 import sys as _sys
 from pathlib import Path as _Path
 _sys.path[:] = [p for p in _sys.path if _Path(p).resolve() != _Path(__file__).resolve().parent]
+# Add ../lib for shared output helpers (envelope, fail).
+_LIB = str(_Path(__file__).resolve().parent.parent / "lib")
+if _LIB not in _sys.path:
+    _sys.path.insert(0, _LIB)
 
-import json
 import shutil
 import subprocess
 from pathlib import Path
@@ -26,6 +29,8 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from _envelope import emit, fail  # noqa: E402
+
 app = typer.Typer(
     rich_markup_mode=None,
     no_args_is_help=True,
@@ -33,19 +38,17 @@ app = typer.Typer(
     help="Atomic Keynote ops — open / list / add slide / set text / export / …",
 )
 console = Console()
-err = Console(stderr=True, style="red")
 warn = Console(stderr=True, style="yellow")
 
 
 def run_as(script: str) -> str:
-    """Run AppleScript, return stdout, raise typer.Exit on error."""
+    """Run AppleScript, return stdout, emit a failure envelope + exit on error."""
     result = subprocess.run(
         ["osascript", "-e", script],
         capture_output=True, text=True, check=False,
     )
     if result.returncode != 0:
-        err.print(f"keynote: {result.stderr.strip() or 'AppleScript failed'}")
-        raise typer.Exit(2)
+        fail(result.stderr.strip() or "AppleScript failed", code=2)
     return result.stdout.rstrip("\n")
 
 
@@ -92,7 +95,13 @@ tell application "Keynote"
 end tell
 '''
     name = run_as(script)
-    console.print(f"created: [bold]{name}[/]" + (f" → {absolute(path)}" if path else ""))
+    abs_path = absolute(path) if path else None
+    emit(
+        {"action": "new", "name": name, "path": abs_path},
+        human=lambda d, _m: console.print(
+            f"created: [bold]{d['name']}[/]" + (f" → {d['path']}" if d["path"] else "")
+        ),
+    )
 
 
 # ── open ─────────────────────────────────────────────────────────
@@ -125,18 +134,19 @@ def open_cmd(
 ):
     abs_src = absolute(path)
     if not Path(abs_src).exists():
-        err.print(f"keynote: file not found: {abs_src}")
-        raise typer.Exit(2)
+        fail(f"file not found: {abs_src}", code=2)
 
+    copied_to = None
+    warning = None
     if save_to is not None:
         abs_dst = absolute(save_to)
         dst = Path(abs_dst)
         if dst.exists() and not force:
-            err.print(
-                f"keynote: destination already exists: {abs_dst}\n"
-                f"        re-run with --force to overwrite"
+            fail(
+                f"destination already exists: {abs_dst}",
+                hint="re-run with --force to overwrite",
+                code=2,
             )
-            raise typer.Exit(2)
         dst.parent.mkdir(parents=True, exist_ok=True)
         # .key on modern macOS is a single Zip file, but legacy / iCloud copies
         # are sometimes folder bundles — handle both shapes.
@@ -147,13 +157,12 @@ def open_cmd(
         else:
             shutil.copy2(abs_src, abs_dst)
         open_path = abs_dst
-        prefix = f"copied: {abs_src} → {abs_dst}\n"
+        copied_to = abs_dst
     else:
         open_path = abs_src
-        prefix = ""
-        warn.print(
-            f"keynote (warn): opened in place — autosave writes back to {abs_src}.\n"
-            f"               If this is a template, use `open --save-to <new-path>` "
+        warning = (
+            f"opened in place — autosave writes back to {abs_src}. "
+            f"If this is a template, use `open --save-to <new-path>` "
             f"to lock autosave to a copy instead."
         )
 
@@ -169,7 +178,26 @@ end tell
 '''
     raw = run_as(script)
     name, count = raw.split("\t")
-    console.print(prefix + f"opened: [bold]{name}[/] ([cyan]{count}[/] slides)")
+
+    def human(d, _m):
+        if d["copied_to"]:
+            console.print(f"copied: {d['source']} → {d['copied_to']}")
+        console.print(f"opened: [bold]{d['name']}[/] ([cyan]{d['slides']}[/] slides)")
+        if d["warning"]:
+            warn.print(f"keynote (warn): {d['warning']}")
+
+    emit(
+        {
+            "action": "open",
+            "name": name,
+            "slides": int(count),
+            "path": open_path,
+            "source": abs_src,
+            "copied_to": copied_to,
+            "warning": warning,
+        },
+        human=human,
+    )
 
 
 # ── info ─────────────────────────────────────────────────────────
@@ -192,12 +220,18 @@ end tell
 '''
     raw = run_as(script)
     if not raw:
-        err.print("keynote: no document open")
-        raise typer.Exit(1)
+        fail("no document open")
     name, path, count = raw.split("\t")
-    console.print(f"name:   [bold]{name}[/]")
-    console.print(f"path:   {path or '[dim](unsaved)[/]'}")
-    console.print(f"slides: [cyan]{count}[/]")
+
+    def human(d, _m):
+        console.print(f"name:   [bold]{d['name']}[/]")
+        console.print(f"path:   {d['path'] or '[dim](unsaved)[/]'}")
+        console.print(f"slides: [cyan]{d['slides']}[/]")
+
+    emit(
+        {"name": name, "path": path or None, "slides": int(count)},
+        human=human,
+    )
 
 
 # ── list-masters ─────────────────────────────────────────────────
@@ -214,15 +248,22 @@ tell application "Keynote"
 end tell
 '''
     raw = run_as(script)
-    table = Table(title="Slide layouts", show_header=True)
-    table.add_column("#", justify="right", style="cyan")
-    table.add_column("name", style="bold")
+    layouts = []
     for line in raw.split("<<<EOL>>>"):
         line = line.strip()
         if "\t" in line:
             idx, name = line.split("\t", 1)
-            table.add_row(idx.strip(), name.strip())
-    console.print(table)
+            layouts.append({"index": int(idx.strip()), "name": name.strip()})
+
+    def human(rows, _m):
+        table = Table(title="Slide layouts", show_header=True)
+        table.add_column("#", justify="right", style="cyan")
+        table.add_column("name", style="bold")
+        for row in rows:
+            table.add_row(str(row["index"]), row["name"])
+        console.print(table)
+
+    emit(layouts, {"count": len(layouts)}, human=human)
 
 
 # ── add-slide ────────────────────────────────────────────────────
@@ -260,7 +301,11 @@ tell application "Keynote"
 end tell
 '''
     num = run_as(script)
-    console.print(f"added slide [cyan]{num}[/]")
+    emit(
+        {"action": "add-slide", "slide": int(num), "master": master,
+         "title": title, "body": body},
+        human=lambda d, _m: console.print(f"added slide [cyan]{d['slide']}[/]"),
+    )
 
 
 # ── set-title ────────────────────────────────────────────────────
@@ -277,7 +322,10 @@ tell application "Keynote"
 end tell
 '''
     run_as(script)
-    console.print(f"slide [cyan]{slide}[/] title set")
+    emit(
+        {"action": "set-title", "slide": slide},
+        human=lambda d, _m: console.print(f"slide [cyan]{d['slide']}[/] title set"),
+    )
 
 
 # ── set-body ─────────────────────────────────────────────────────
@@ -294,7 +342,10 @@ tell application "Keynote"
 end tell
 '''
     run_as(script)
-    console.print(f"slide [cyan]{slide}[/] body set")
+    emit(
+        {"action": "set-body", "slide": slide},
+        human=lambda d, _m: console.print(f"slide [cyan]{d['slide']}[/] body set"),
+    )
 
 
 # ── set-notes ────────────────────────────────────────────────────
@@ -311,7 +362,10 @@ tell application "Keynote"
 end tell
 '''
     run_as(script)
-    console.print(f"slide [cyan]{slide}[/] notes set")
+    emit(
+        {"action": "set-notes", "slide": slide},
+        human=lambda d, _m: console.print(f"slide [cyan]{d['slide']}[/] notes set"),
+    )
 
 
 # ── get-slide ────────────────────────────────────────────────────
@@ -353,7 +407,12 @@ end tell
         parts.append("")
     title, body, notes = (p.replace("\r\n", "\n").replace("\r", "\n") for p in parts)
     payload = {"slide": slide, "title": title, "body": body, "notes": notes}
-    print(json.dumps(payload, ensure_ascii=False, indent=2))
+
+    def human(d, _m):
+        import json as _j
+        print(_j.dumps(d, ensure_ascii=False, indent=2))
+
+    emit(payload, human=human)
 
 
 # ── list-shapes ──────────────────────────────────────────────────
@@ -379,19 +438,26 @@ tell application "Keynote"
 end tell
 '''
     raw = run_as(script)
-    table = Table(title=f"Shapes on slide {slide}", show_header=True)
-    table.add_column("#", justify="right", style="cyan")
-    table.add_column("kind", style="dim")
-    table.add_column("text", style="bold")
+    shapes = []
     for line in raw.split("<<<EOL>>>"):
         line = line.strip()
         parts = line.split("\t", 2)
         if len(parts) >= 2:
             idx, kind = parts[0], parts[1]
             text = parts[2] if len(parts) == 3 else ""
-            shown = text.replace("\r", " ↩ ").replace("\n", " ↩ ") or "[dim](empty)[/]"
-            table.add_row(idx, kind, shown)
-    console.print(table)
+            shapes.append({"index": int(idx), "kind": kind, "text": text})
+
+    def human(rows, _m):
+        table = Table(title=f"Shapes on slide {slide}", show_header=True)
+        table.add_column("#", justify="right", style="cyan")
+        table.add_column("kind", style="dim")
+        table.add_column("text", style="bold")
+        for row in rows:
+            shown = row["text"].replace("\r", " ↩ ").replace("\n", " ↩ ") or "[dim](empty)[/]"
+            table.add_row(str(row["index"]), row["kind"], shown)
+        console.print(table)
+
+    emit(shapes, {"count": len(shapes), "slide": slide}, human=human)
 
 
 # ── set-shape-text ───────────────────────────────────────────────
@@ -411,7 +477,12 @@ tell application "Keynote"
 end tell
 '''
     run_as(script)
-    console.print(f"slide [cyan]{slide}[/] shape [cyan]{shape}[/] text set")
+    emit(
+        {"action": "set-shape-text", "slide": slide, "shape": shape},
+        human=lambda d, _m: console.print(
+            f"slide [cyan]{d['slide']}[/] shape [cyan]{d['shape']}[/] text set"
+        ),
+    )
 
 
 # ── set-position ─────────────────────────────────────────────────
@@ -433,11 +504,9 @@ def set_position(
     height: Optional[int] = typer.Option(None, "--h", help="Height in points"),
 ):
     if (x is None) != (y is None):
-        err.print("keynote: pass --x and --y together (or neither)")
-        raise typer.Exit(2)
+        fail("pass --x and --y together (or neither)", code=2)
     if x is None and width is None and height is None:
-        err.print("keynote: nothing to do — pass at least --x/--y, --w, or --h")
-        raise typer.Exit(2)
+        fail("nothing to do — pass at least --x/--y, --w, or --h", code=2)
 
     parts = []
     if x is not None:
@@ -457,14 +526,24 @@ tell application "Keynote"
 end tell
 '''
     run_as(script)
-    bits = []
-    if x is not None:
-        bits.append(f"pos=({x},{y})")
-    if width is not None:
-        bits.append(f"w={width}")
-    if height is not None:
-        bits.append(f"h={height}")
-    console.print(f"slide [cyan]{slide}[/] shape [cyan]{shape}[/] {' '.join(bits)}")
+
+    def human(d, _m):
+        bits = []
+        if d["x"] is not None:
+            bits.append(f"pos=({d['x']},{d['y']})")
+        if d["width"] is not None:
+            bits.append(f"w={d['width']}")
+        if d["height"] is not None:
+            bits.append(f"h={d['height']}")
+        console.print(
+            f"slide [cyan]{d['slide']}[/] shape [cyan]{d['shape']}[/] {' '.join(bits)}"
+        )
+
+    emit(
+        {"action": "set-position", "slide": slide, "shape": shape,
+         "x": x, "y": y, "width": width, "height": height},
+        human=human,
+    )
 
 
 # ── delete-shape ─────────────────────────────────────────────────
@@ -483,7 +562,12 @@ tell application "Keynote"
 end tell
 '''
     run_as(script)
-    console.print(f"slide [cyan]{slide}[/] shape [cyan]{shape}[/] deleted")
+    emit(
+        {"action": "delete-shape", "slide": slide, "shape": shape},
+        human=lambda d, _m: console.print(
+            f"slide [cyan]{d['slide']}[/] shape [cyan]{d['shape']}[/] deleted"
+        ),
+    )
 
 
 # ── list-slides ──────────────────────────────────────────────────
@@ -508,15 +592,22 @@ tell application "Keynote"
 end tell
 '''
     raw = run_as(script)
-    table = Table(title="Slides", show_header=True)
-    table.add_column("#", justify="right", style="cyan")
-    table.add_column("title", style="bold")
+    slides = []
     for line in raw.split("<<<EOL>>>"):
         line = line.strip()
         if "\t" in line:
             idx, t = line.split("\t", 1)
-            table.add_row(idx, t.replace("\r", " ").replace("\n", " "))
-    console.print(table)
+            slides.append({"index": int(idx), "title": t})
+
+    def human(rows, _m):
+        table = Table(title="Slides", show_header=True)
+        table.add_column("#", justify="right", style="cyan")
+        table.add_column("title", style="bold")
+        for row in rows:
+            table.add_row(str(row["index"]), row["title"].replace("\r", " ").replace("\n", " "))
+        console.print(table)
+
+    emit(slides, {"count": len(slides)}, human=human)
 
 
 # ── delete-slide ─────────────────────────────────────────────────
@@ -531,7 +622,12 @@ tell application "Keynote"
 end tell
 '''
     remaining = run_as(script)
-    console.print(f"deleted slide [cyan]{slide}[/] (remaining: [cyan]{remaining}[/])")
+    emit(
+        {"action": "delete-slide", "slide": slide, "remaining": int(remaining)},
+        human=lambda d, _m: console.print(
+            f"deleted slide [cyan]{d['slide']}[/] (remaining: [cyan]{d['remaining']}[/])"
+        ),
+    )
 
 
 # ── save ─────────────────────────────────────────────────────────
@@ -564,7 +660,10 @@ end tell
         # `save in <path>` writes a copy but does not change the doc's `file`
         # binding — so we trust the user-supplied path for the report, not
         # `file of front document` (which still points at the original).
-        console.print(f"saved copy: {abs_path}")
+        emit(
+            {"action": "save", "copy": True, "path": abs_path},
+            human=lambda d, _m: console.print(f"saved copy: {d['path']}"),
+        )
     else:
         script = '''
 tell application "Keynote"
@@ -573,7 +672,10 @@ tell application "Keynote"
 end tell
 '''
         saved = run_as(script)
-        console.print(f"saved: {saved}")
+        emit(
+            {"action": "save", "copy": False, "path": saved},
+            human=lambda d, _m: console.print(f"saved: {d['path']}"),
+        )
 
 
 # ── export ───────────────────────────────────────────────────────
@@ -583,11 +685,9 @@ def export(
     pptx: Optional[Path] = typer.Option(None, "--pptx", help="Export to this PPTX path"),
 ):
     if not pdf and not pptx:
-        err.print("keynote: must specify --pdf or --pptx")
-        raise typer.Exit(2)
+        fail("must specify --pdf or --pptx", code=2)
     if pdf and pptx:
-        err.print("keynote: pick one of --pdf or --pptx")
-        raise typer.Exit(2)
+        fail("pick one of --pdf or --pptx", code=2)
     if pdf:
         target = absolute(pdf)
         fmt = "PDF"
@@ -600,7 +700,10 @@ tell application "Keynote"
 end tell
 '''
     run_as(script)
-    console.print(f"exported [{fmt}]: {target}")
+    emit(
+        {"action": "export", "format": fmt, "path": target},
+        human=lambda d, _m: console.print(f"exported [{d['format']}]: {d['path']}"),
+    )
 
 
 # ── add-image ────────────────────────────────────────────────────
@@ -615,8 +718,7 @@ def add_image(
 ):
     abs_img = absolute(image_path)
     if not Path(abs_img).exists():
-        err.print(f"keynote: image not found: {abs_img}")
-        raise typer.Exit(2)
+        fail(f"image not found: {abs_img}", code=2)
     size_clause = f", width:{width}, height:{height}" if (width and height) else ""
     script = f'''
 tell application "Keynote"
@@ -628,7 +730,12 @@ tell application "Keynote"
 end tell
 '''
     run_as(script)
-    console.print(f"added image to slide [cyan]{slide}[/]: {abs_img}")
+    emit(
+        {"action": "add-image", "slide": slide, "image": abs_img},
+        human=lambda d, _m: console.print(
+            f"added image to slide [cyan]{d['slide']}[/]: {d['image']}"
+        ),
+    )
 
 
 # ── add-table ────────────────────────────────────────────────────
@@ -656,8 +763,7 @@ def add_table(
     height: Optional[int] = typer.Option(None, "--h", help="Height in points"),
 ):
     if rows < 1 or cols < 1:
-        err.print("keynote: --rows and --cols must be >= 1")
-        raise typer.Exit(2)
+        fail("--rows and --cols must be >= 1", code=2)
 
     parts = [
         f"make new table with properties {{row count:{rows}, column count:{cols}}}",
@@ -699,8 +805,13 @@ tell application "Keynote"
 end tell
 '''
     table_index = run_as(script)
-    console.print(
-        f"added table [cyan]{table_index}[/] to slide [cyan]{slide}[/] ([cyan]{rows}[/]×[cyan]{cols}[/])"
+    emit(
+        {"action": "add-table", "slide": slide, "table": int(table_index),
+         "rows": rows, "cols": cols},
+        human=lambda d, _m: console.print(
+            f"added table [cyan]{d['table']}[/] to slide [cyan]{d['slide']}[/] "
+            f"([cyan]{d['rows']}[/]×[cyan]{d['cols']}[/])"
+        ),
     )
 
 
@@ -729,8 +840,12 @@ tell application "Keynote"
 end tell
 '''
     run_as(script)
-    console.print(
-        f"slide [cyan]{slide}[/] table [cyan]{table}[/] cell ([cyan]{row}[/],[cyan]{col}[/]) set"
+    emit(
+        {"action": "set-cell", "slide": slide, "table": table, "row": row, "col": col},
+        human=lambda d, _m: console.print(
+            f"slide [cyan]{d['slide']}[/] table [cyan]{d['table']}[/] "
+            f"cell ([cyan]{d['row']}[/],[cyan]{d['col']}[/]) set"
+        ),
     )
 
 
@@ -758,7 +873,10 @@ tell application "Keynote"
 end tell
 '''
     val = run_as(script)
-    print(val)
+    emit(
+        {"slide": slide, "table": table, "row": row, "col": col, "value": val},
+        human=lambda d, _m: print(d["value"]),
+    )
 
 
 # ── insert-row / insert-col ──────────────────────────────────────
@@ -793,7 +911,12 @@ tell application "Keynote"
 end tell
 '''
     run_as(script)
-    console.print(f"slide [cyan]{slide}[/] table [cyan]{table}[/] inserted row at [cyan]{at}[/]")
+    emit(
+        {"action": "insert-row", "slide": slide, "table": table, "at": at},
+        human=lambda d, _m: console.print(
+            f"slide [cyan]{d['slide']}[/] table [cyan]{d['table']}[/] inserted row at [cyan]{d['at']}[/]"
+        ),
+    )
 
 
 @app.command(
@@ -827,7 +950,12 @@ tell application "Keynote"
 end tell
 '''
     run_as(script)
-    console.print(f"slide [cyan]{slide}[/] table [cyan]{table}[/] inserted column at [cyan]{at}[/]")
+    emit(
+        {"action": "insert-col", "slide": slide, "table": table, "at": at},
+        human=lambda d, _m: console.print(
+            f"slide [cyan]{d['slide']}[/] table [cyan]{d['table']}[/] inserted column at [cyan]{d['at']}[/]"
+        ),
+    )
 
 
 # ── delete-row / delete-col ──────────────────────────────────────
@@ -849,7 +977,12 @@ tell application "Keynote"
 end tell
 '''
     run_as(script)
-    console.print(f"slide [cyan]{slide}[/] table [cyan]{table}[/] deleted row [cyan]{row}[/]")
+    emit(
+        {"action": "delete-row", "slide": slide, "table": table, "row": row},
+        human=lambda d, _m: console.print(
+            f"slide [cyan]{d['slide']}[/] table [cyan]{d['table']}[/] deleted row [cyan]{d['row']}[/]"
+        ),
+    )
 
 
 @app.command(name="delete-col", help="Delete a column from a table.")
@@ -870,7 +1003,12 @@ tell application "Keynote"
 end tell
 '''
     run_as(script)
-    console.print(f"slide [cyan]{slide}[/] table [cyan]{table}[/] deleted column [cyan]{col}[/]")
+    emit(
+        {"action": "delete-col", "slide": slide, "table": table, "col": col},
+        human=lambda d, _m: console.print(
+            f"slide [cyan]{d['slide']}[/] table [cyan]{d['table']}[/] deleted column [cyan]{d['col']}[/]"
+        ),
+    )
 
 
 # ── preview ──────────────────────────────────────────────────────
@@ -883,7 +1021,10 @@ tell application "Keynote"
 end tell
 '''
     run_as(script)
-    console.print(f"preview: {out}")
+    emit(
+        {"action": "preview", "path": out},
+        human=lambda d, _m: console.print(f"preview: {d['path']}"),
+    )
 
 
 # ── close ────────────────────────────────────────────────────────
@@ -898,7 +1039,10 @@ tell application "Keynote"
 end tell
 '''
     run_as(script)
-    console.print("closed")
+    emit(
+        {"action": "close", "discarded": discard},
+        human=lambda d, _m: console.print("closed"),
+    )
 
 
 if __name__ == "__main__":

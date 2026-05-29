@@ -14,6 +14,10 @@ from __future__ import annotations
 import sys as _sys
 from pathlib import Path as _Path
 _sys.path[:] = [p for p in _sys.path if _Path(p).resolve() != _Path(__file__).resolve().parent]
+# Add ../lib for shared output helpers (envelope, fail).
+_LIB = str(_Path(__file__).resolve().parent.parent / "lib")
+if _LIB not in _sys.path:
+    _sys.path.insert(0, _LIB)
 
 import subprocess
 from datetime import datetime, timedelta
@@ -23,6 +27,8 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from _envelope import emit, fail  # noqa: E402
+
 app = typer.Typer(
     rich_markup_mode=None,
     no_args_is_help=True,
@@ -30,7 +36,6 @@ app = typer.Typer(
     help="Atomic Reminders.app ops — list / add / done / delete / show-lists.",
 )
 console = Console()
-err = Console(stderr=True, style="red")
 
 
 def run_as(script: str) -> str:
@@ -39,8 +44,7 @@ def run_as(script: str) -> str:
         capture_output=True, text=True, check=False,
     )
     if result.returncode != 0:
-        err.print(f"reminders: {result.stderr.strip() or 'AppleScript failed'}")
-        raise typer.Exit(2)
+        fail(result.stderr.strip() or "AppleScript failed", code=2)
     return result.stdout.rstrip("\n")
 
 
@@ -70,8 +74,11 @@ def parse_when(when: str) -> datetime:
             return dt
         except ValueError:
             continue
-    err.print(f"reminders: can't parse date '{when}' — try YYYY-MM-DD, YYYY-MM-DDTHH:MM, 'today', or 'tomorrow'")
-    raise typer.Exit(2)
+    fail(
+        f"can't parse date '{when}'",
+        hint="try YYYY-MM-DD, YYYY-MM-DDTHH:MM, 'today', or 'tomorrow'",
+        code=2,
+    )
 
 
 def as_date_block(dt: datetime, var: str = "theDate") -> str:
@@ -100,13 +107,17 @@ tell application "Reminders"
 end tell
 '''
     raw = run_as(script)
-    table = Table(title="Reminders lists", show_header=True)
-    table.add_column("name", style="bold")
-    for line in raw.split("<<<EOL>>>"):
-        line = line.strip()
-        if line:
-            table.add_row(line)
-    console.print(table)
+    names = [line.strip() for line in raw.split("<<<EOL>>>") if line.strip()]
+    data = [{"name": n} for n in names]
+
+    def human(rows, _meta):
+        table = Table(title="Reminders lists", show_header=True)
+        table.add_column("name", style="bold")
+        for r in rows:
+            table.add_row(r["name"])
+        console.print(table)
+
+    emit(data, {"count": len(data)}, human=human)
 
 
 # ── list ─────────────────────────────────────────────────────────
@@ -136,24 +147,31 @@ tell application "Reminders"
 end tell
 '''
     raw = run_as(script)
-    table = Table(title=f"Reminders ({list_name or 'default list'})", show_header=True)
-    table.add_column("#", justify="right", style="cyan")
-    table.add_column("name", style="bold")
-    table.add_column("due", style="dim")
-    table.add_column("done", style="green")
-    rows = [line.strip() for line in raw.split("<<<EOL>>>") if line.strip()]
+    lines = [line.strip() for line in raw.split("<<<EOL>>>") if line.strip()]
     if limit:
-        rows = rows[:limit]
-    if not rows:
-        console.print("[dim](no reminders)[/]")
-        return
-    for i, line in enumerate(rows, start=1):
+        lines = lines[:limit]
+    data = []
+    for line in lines:
         parts = line.split("\t")
         if len(parts) >= 3:
             name, due, done = parts[0], parts[1], parts[2]
-            mark = "✓" if done.lower() == "true" else ""
-            table.add_row(str(i), name, due or "—", mark)
-    console.print(table)
+            data.append({"name": name, "due": due, "done": done.lower() == "true"})
+
+    def human(rows, _meta):
+        if not rows:
+            console.print("[dim](no reminders)[/]")
+            return
+        table = Table(title=f"Reminders ({list_name or 'default list'})", show_header=True)
+        table.add_column("#", justify="right", style="cyan")
+        table.add_column("name", style="bold")
+        table.add_column("due", style="dim")
+        table.add_column("done", style="green")
+        for i, r in enumerate(rows, start=1):
+            mark = "✓" if r["done"] else ""
+            table.add_row(str(i), r["name"], r["due"] or "—", mark)
+        console.print(table)
+
+    emit(data, {"count": len(data), "list": list_name or "default list", "show_done": show_done}, human=human)
 
 
 # ── add ──────────────────────────────────────────────────────────
@@ -189,12 +207,18 @@ tell application "Reminders"
 end tell
 '''
     name_out = run_as(script)
-    msg = f"added: [bold]{name_out}[/]"
-    if due:
-        msg += f" (due {dt.strftime('%Y-%m-%d %H:%M')})"
-    if list_name:
-        msg += f" → {list_name}"
-    console.print(msg)
+    due_str = dt.strftime("%Y-%m-%d %H:%M") if due else None
+    data = {"action": "add", "name": name_out, "due": due_str, "list": list_name}
+
+    def human(d, _meta):
+        msg = f"added: [bold]{d['name']}[/]"
+        if d["due"]:
+            msg += f" (due {d['due']})"
+        if d["list"]:
+            msg += f" → {d['list']}"
+        console.print(msg)
+
+    emit(data, human=human)
 
 
 # ── done ─────────────────────────────────────────────────────────
@@ -211,7 +235,8 @@ tell application "Reminders"
 end tell
 '''
     name_out = run_as(script)
-    console.print(f"done: [bold]{name_out}[/] ✓")
+    data = {"action": "done", "name": name_out, "list": list_name}
+    emit(data, human=lambda d, _m: console.print(f"done: [bold]{d['name']}[/] ✓"))
 
 
 # ── delete ───────────────────────────────────────────────────────
@@ -228,7 +253,8 @@ tell application "Reminders"
 end tell
 '''
     name_out = run_as(script)
-    console.print(f"deleted: [bold]{name_out}[/]")
+    data = {"action": "delete", "name": name_out, "list": list_name}
+    emit(data, human=lambda d, _m: console.print(f"deleted: [bold]{d['name']}[/]"))
 
 
 if __name__ == "__main__":
