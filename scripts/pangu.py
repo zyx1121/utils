@@ -56,4 +56,6 @@ def main(
 
 
 if __name__ == "__main__":
-    typer.run(main)
+    app = typer.Typer(rich_markup_mode=None, add_completion=False)
+    app.command()(main)
+    app()

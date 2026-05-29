@@ -61,6 +61,7 @@ VM_BRIDGE = os.environ.get("UTILS_PVE_BRIDGE", "vnet10")
 FW_GROUP = os.environ.get("UTILS_PVE_FW_GROUP", "spoke")
 
 app = typer.Typer(
+    rich_markup_mode=None,
     no_args_is_help=True,
     add_completion=False,
     help="PVE / gateway atoms — list / status / start / stop / ssh / clone / forward / dns / caddy via SSH aliases.",
