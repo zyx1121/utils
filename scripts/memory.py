@@ -10,6 +10,10 @@ from __future__ import annotations
 import sys as _sys
 from pathlib import Path as _Path
 _sys.path[:] = [p for p in _sys.path if _Path(p).resolve() != _Path(__file__).resolve().parent]
+# Add ../lib for shared output helpers (envelope, fail).
+_LIB = str(_Path(__file__).resolve().parent.parent / "lib")
+if _LIB not in _sys.path:
+    _sys.path.insert(0, _LIB)
 
 import re
 from datetime import datetime, timedelta
@@ -21,6 +25,8 @@ import yaml
 from rich.console import Console
 from rich.table import Table
 
+from _envelope import emit, fail  # noqa: E402
+
 app = typer.Typer(
     rich_markup_mode=None,
     no_args_is_help=True,
@@ -28,7 +34,6 @@ app = typer.Typer(
     help="Browse Claude Code memory — list / recent / search / show.",
 )
 console = Console()
-err = Console(stderr=True, style="red")
 
 
 # ── path resolution ──────────────────────────────────────────────
@@ -46,8 +51,11 @@ def memory_dir() -> Path:
         candidate = home / ".claude" / "projects" / encoded / "memory"
         if candidate.is_dir():
             return candidate
-    err.print(f"memory: no memory directory found (checked {cwd} and {home})")
-    raise typer.Exit(1)
+    fail(
+        "no memory directory found",
+        why=f"checked {cwd} and {home}",
+        hint="run from a project that has ~/.claude/projects/<encoded-cwd>/memory/",
+    )
 
 
 # ── parsing ──────────────────────────────────────────────────────
@@ -94,17 +102,22 @@ def list_cmd(
     memories = all_memories()
     if type_:
         memories = [m for m in memories if m["type"] == type_]
-    if not memories:
-        console.print("[dim](no memories)[/]")
-        return
-    table = Table(title=f"Memory · {memory_dir()}", show_header=True)
-    table.add_column("#", justify="right", style="cyan")
-    table.add_column("name", style="bold")
-    table.add_column("type", style="dim")
-    table.add_column("description")
-    for i, m in enumerate(memories, 1):
-        table.add_row(str(i), m["name"], m["type"], _truncate(m["description"], 80))
-    console.print(table)
+    data = [{"name": m["name"], "type": m["type"], "description": m["description"]} for m in memories]
+
+    def human(rows, _meta):
+        if not rows:
+            console.print("[dim](no memories)[/]")
+            return
+        table = Table(title=f"Memory · {memory_dir()}", show_header=True)
+        table.add_column("#", justify="right", style="cyan")
+        table.add_column("name", style="bold")
+        table.add_column("type", style="dim")
+        table.add_column("description")
+        for i, m in enumerate(rows, 1):
+            table.add_row(str(i), m["name"], m["type"], _truncate(m["description"], 80))
+        console.print(table)
+
+    emit(data, {"count": len(data), "dir": str(memory_dir()), "type": type_}, human=human)
 
 
 # ── recent ───────────────────────────────────────────────────────
@@ -121,17 +134,30 @@ def recent(
     )
     if limit:
         memories = memories[:limit]
-    if not memories:
-        console.print(f"[dim](no memories modified in the last {days} days)[/]")
-        return
-    table = Table(title=f"Memory · last {days}d", show_header=True)
-    table.add_column("mtime", style="cyan")
-    table.add_column("name", style="bold")
-    table.add_column("type", style="dim")
-    table.add_column("description")
-    for m in memories:
-        table.add_row(m["mtime"].strftime("%Y-%m-%d %H:%M"), m["name"], m["type"], _truncate(m["description"], 60))
-    console.print(table)
+    data = [
+        {
+            "mtime": m["mtime"].isoformat(timespec="minutes"),
+            "name": m["name"],
+            "type": m["type"],
+            "description": m["description"],
+        }
+        for m in memories
+    ]
+
+    def human(rows, _meta):
+        if not rows:
+            console.print(f"[dim](no memories modified in the last {days} days)[/]")
+            return
+        table = Table(title=f"Memory · last {days}d", show_header=True)
+        table.add_column("mtime", style="cyan")
+        table.add_column("name", style="bold")
+        table.add_column("type", style="dim")
+        table.add_column("description")
+        for m in rows:
+            table.add_row(m["mtime"][:16].replace("T", " "), m["name"], m["type"], _truncate(m["description"], 60))
+        console.print(table)
+
+    emit(data, {"count": len(data), "days": days}, human=human)
 
 
 # ── search ───────────────────────────────────────────────────────
@@ -148,17 +174,22 @@ def search(
             haystack += "\n" + m["body"].lower()
         if needle in haystack:
             hits.append(m)
-    if not hits:
-        console.print(f"[dim](no memories matching '{query}')[/]")
-        return
-    table = Table(title=f"Search '{query}' · {len(hits)} hits", show_header=True)
-    table.add_column("#", justify="right", style="cyan")
-    table.add_column("name", style="bold")
-    table.add_column("type", style="dim")
-    table.add_column("description")
-    for i, m in enumerate(hits, 1):
-        table.add_row(str(i), m["name"], m["type"], _truncate(m["description"], 80))
-    console.print(table)
+    data = [{"name": m["name"], "type": m["type"], "description": m["description"]} for m in hits]
+
+    def human(rows, _meta):
+        if not rows:
+            console.print(f"[dim](no memories matching '{query}')[/]")
+            return
+        table = Table(title=f"Search '{query}' · {len(rows)} hits", show_header=True)
+        table.add_column("#", justify="right", style="cyan")
+        table.add_column("name", style="bold")
+        table.add_column("type", style="dim")
+        table.add_column("description")
+        for i, m in enumerate(rows, 1):
+            table.add_row(str(i), m["name"], m["type"], _truncate(m["description"], 80))
+        console.print(table)
+
+    emit(data, {"count": len(data), "query": query}, human=human)
 
 
 # ── show ─────────────────────────────────────────────────────────
@@ -189,9 +220,13 @@ def show(
                 target = m["path"]
                 break
     if not target:
-        err.print(f"memory: no memory matching '{name}'")
-        raise typer.Exit(1)
-    console.print(target.read_text(encoding="utf-8"))
+        fail(f"no memory matching '{name}'", hint="run `utils memory list` to see available names")
+    parsed = parse_memory(target)
+    content = target.read_text(encoding="utf-8")
+    emit(
+        {"name": parsed["name"], "type": parsed["type"], "path": str(target), "content": content},
+        human=lambda d, _m: print(d["content"]),
+    )
 
 
 if __name__ == "__main__":
