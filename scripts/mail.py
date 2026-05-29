@@ -23,6 +23,7 @@ from rich.console import Console
 from rich.table import Table
 
 app = typer.Typer(
+    rich_markup_mode=None,
     no_args_is_help=True,
     add_completion=False,
     help="Atomic Mail.app ops — accounts / inbox / search / read / compose (no auto-send).",

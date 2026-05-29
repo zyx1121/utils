@@ -68,6 +68,7 @@ BASE_DEFAULT = "https://e3p.nycu.edu.tw"
 SERVICE_DEFAULT = "moodle_mobile_app"
 
 app = typer.Typer(
+    rich_markup_mode=None,
     no_args_is_help=True,
     add_completion=False,
     help="E3@NYCU (Moodle) atoms — login / courses / assignments / due / submission / grades / content / download / call.",
