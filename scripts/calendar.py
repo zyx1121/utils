@@ -14,6 +14,10 @@ from __future__ import annotations
 import sys as _sys
 from pathlib import Path as _Path
 _sys.path[:] = [p for p in _sys.path if _Path(p).resolve() != _Path(__file__).resolve().parent]
+# Add ../lib for shared output helpers (envelope, fail).
+_LIB = str(_Path(__file__).resolve().parent.parent / "lib")
+if _LIB not in _sys.path:
+    _sys.path.insert(0, _LIB)
 
 import subprocess
 from datetime import datetime, timedelta
@@ -23,6 +27,8 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from _envelope import emit, fail  # noqa: E402
+
 app = typer.Typer(
     rich_markup_mode=None,
     no_args_is_help=True,
@@ -30,7 +36,6 @@ app = typer.Typer(
     help="Atomic Calendar.app ops — show-cals / list / add / search / delete.",
 )
 console = Console()
-err = Console(stderr=True, style="red")
 
 
 def run_as(script: str) -> str:
@@ -39,8 +44,7 @@ def run_as(script: str) -> str:
         capture_output=True, text=True, check=False, timeout=60,
     )
     if result.returncode != 0:
-        err.print(f"calendar: {result.stderr.strip() or 'AppleScript failed'}")
-        raise typer.Exit(2)
+        fail(result.stderr.strip() or "AppleScript failed", code=2)
     return result.stdout.rstrip("\n")
 
 
@@ -68,8 +72,11 @@ def parse_when(when: str) -> datetime:
             return dt
         except ValueError:
             continue
-    err.print(f"calendar: can't parse '{when}' — try YYYY-MM-DD, YYYY-MM-DDTHH:MM, 'today', 'tomorrow', 'now'")
-    raise typer.Exit(2)
+    fail(
+        f"can't parse '{when}'",
+        hint="try YYYY-MM-DD, YYYY-MM-DDTHH:MM, 'today', 'tomorrow', 'now'",
+        code=2,
+    )
 
 
 def as_date_block(dt: datetime, var: str = "theDate") -> str:
@@ -102,17 +109,24 @@ tell application "Calendar"
 end tell
 '''
     raw = run_as(script)
-    table = Table(title="Calendars", show_header=True)
-    table.add_column("name", style="bold")
-    table.add_column("writable", style="green")
+    data = []
     for line in raw.split("<<<EOL>>>"):
         line = line.strip()
         parts = line.split("\t")
         if len(parts) == 2:
             name, w = parts
-            mark = "✓" if w.lower() == "true" else "—"
-            table.add_row(name, mark)
-    console.print(table)
+            data.append({"name": name, "writable": w.lower() == "true"})
+
+    def human(rows, _meta):
+        table = Table(title="Calendars", show_header=True)
+        table.add_column("name", style="bold")
+        table.add_column("writable", style="green")
+        for c in rows:
+            mark = "✓" if c["writable"] else "—"
+            table.add_row(c["name"], mark)
+        console.print(table)
+
+    emit(data, {"count": len(data)}, human=human)
 
 
 # ── list ─────────────────────────────────────────────────────────
@@ -155,23 +169,34 @@ end tell
     rows = [l.strip() for l in raw.split("<<<EOL>>>") if l.strip()]
     if limit:
         rows = rows[:limit]
-    if not rows:
-        console.print(f"[dim](no events in {start_dt.strftime('%Y-%m-%d')} – {end_dt.strftime('%Y-%m-%d')})[/]")
-        return
-    table = Table(title=f"Events {start_dt.strftime('%Y-%m-%d')} – {end_dt.strftime('%Y-%m-%d')}", show_header=True)
-    table.add_column("calendar", style="cyan")
-    table.add_column("start", style="dim")
-    table.add_column("summary", style="bold")
-    table.add_column("location", style="dim")
+    data = []
     for line in rows:
         parts = line.split("\t")
         if len(parts) >= 3:
-            cal_name = parts[0]
-            start = parts[1]
-            summary = parts[2]
-            loc = parts[3] if len(parts) > 3 else ""
-            table.add_row(cal_name, start, summary, loc or "—")
-    console.print(table)
+            data.append({
+                "calendar": parts[0],
+                "start": parts[1],
+                "summary": parts[2],
+                "location": parts[3] if len(parts) > 3 else "",
+            })
+
+    start_label = start_dt.strftime("%Y-%m-%d")
+    end_label = end_dt.strftime("%Y-%m-%d")
+
+    def human(events, _meta):
+        if not events:
+            console.print(f"[dim](no events in {start_label} – {end_label})[/]")
+            return
+        table = Table(title=f"Events {start_label} – {end_label}", show_header=True)
+        table.add_column("calendar", style="cyan")
+        table.add_column("start", style="dim")
+        table.add_column("summary", style="bold")
+        table.add_column("location", style="dim")
+        for e in events:
+            table.add_row(e["calendar"], e["start"], e["summary"], e["location"] or "—")
+        console.print(table)
+
+    emit(data, {"count": len(data), "from": start_dt.isoformat(), "to": end_dt.isoformat()}, human=human)
 
 
 # ── add ──────────────────────────────────────────────────────────
@@ -205,12 +230,27 @@ tell application "Calendar"
 end tell
 '''
     name_out = run_as(script)
-    msg = f"added: [bold]{name_out}[/] · {start_dt.strftime('%Y-%m-%d %H:%M')} → {end_dt.strftime('%H:%M')}"
-    if cal:
-        msg += f" · {cal}"
-    if location:
-        msg += f" @ {location}"
-    console.print(msg)
+    data = {
+        "action": "add",
+        "summary": name_out,
+        "start": start_dt.isoformat(),
+        "end": end_dt.isoformat(),
+        "calendar": cal,
+        "location": location,
+    }
+
+    def human(d, _meta):
+        msg = (
+            f"added: [bold]{d['summary']}[/] · "
+            f"{start_dt.strftime('%Y-%m-%d %H:%M')} → {end_dt.strftime('%H:%M')}"
+        )
+        if d["calendar"]:
+            msg += f" · {d['calendar']}"
+        if d["location"]:
+            msg += f" @ {d['location']}"
+        console.print(msg)
+
+    emit(data, human=human)
 
 
 # ── search ───────────────────────────────────────────────────────
@@ -249,18 +289,25 @@ end tell
     rows = [l.strip() for l in raw.split("<<<EOL>>>") if l.strip()]
     if limit:
         rows = rows[:limit]
-    if not rows:
-        console.print(f"[dim](no events matching '{query}')[/]")
-        return
-    table = Table(title=f"Search: '{query}'", show_header=True)
-    table.add_column("calendar", style="cyan")
-    table.add_column("start", style="dim")
-    table.add_column("summary", style="bold")
+    data = []
     for line in rows:
         parts = line.split("\t")
         if len(parts) >= 3:
-            table.add_row(parts[0], parts[1], parts[2])
-    console.print(table)
+            data.append({"calendar": parts[0], "start": parts[1], "summary": parts[2]})
+
+    def human(events, _meta):
+        if not events:
+            console.print(f"[dim](no events matching '{query}')[/]")
+            return
+        table = Table(title=f"Search: '{query}'", show_header=True)
+        table.add_column("calendar", style="cyan")
+        table.add_column("start", style="dim")
+        table.add_column("summary", style="bold")
+        for e in events:
+            table.add_row(e["calendar"], e["start"], e["summary"])
+        console.print(table)
+
+    emit(data, {"count": len(data), "query": query, "from": start_dt.isoformat(), "to": end_dt.isoformat()}, human=human)
 
 
 # ── delete ───────────────────────────────────────────────────────
@@ -287,7 +334,12 @@ tell application "Calendar"
 end tell
 '''
     name_out = run_as(script)
-    console.print(f"deleted: [bold]{name_out}[/] from [cyan]{cal}[/]")
+    data = {"action": "delete", "summary": name_out, "calendar": cal}
+
+    def human(d, _meta):
+        console.print(f"deleted: [bold]{d['summary']}[/] from [cyan]{d['calendar']}[/]")
+
+    emit(data, human=human)
 
 
 if __name__ == "__main__":

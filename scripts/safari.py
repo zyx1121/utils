@@ -17,12 +17,18 @@ from __future__ import annotations
 import sys as _sys
 from pathlib import Path as _Path
 _sys.path[:] = [p for p in _sys.path if _Path(p).resolve() != _Path(__file__).resolve().parent]
+# Add ../lib for shared output helpers (envelope, fail).
+_LIB = str(_Path(__file__).resolve().parent.parent / "lib")
+if _LIB not in _sys.path:
+    _sys.path.insert(0, _LIB)
 
 import subprocess
 
 import typer
 from rich.console import Console
 from rich.table import Table
+
+from _envelope import emit, fail  # noqa: E402
 
 app = typer.Typer(
     rich_markup_mode=None,
@@ -31,7 +37,6 @@ app = typer.Typer(
     help="Atomic Safari.app ops — url / title / text / tabs / open / close / selection / js.",
 )
 console = Console()
-err = Console(stderr=True, style="red")
 
 
 JS_HINT = (
@@ -49,13 +54,10 @@ def run_as(script: str, *, want_stdout: bool = True) -> str:
     if result.returncode != 0:
         stderr = result.stderr.strip()
         if "Allow JavaScript from Apple Events" in stderr:
-            err.print(f"safari: JavaScript-from-Apple-Events is disabled.\n{JS_HINT}")
-            raise typer.Exit(2)
+            fail("JavaScript-from-Apple-Events is disabled", why=stderr, hint=JS_HINT, code=2)
         if "Can't get current tab" in stderr or "Can't get tab" in stderr:
-            err.print("safari: no active tab — open a page in Safari first")
-            raise typer.Exit(2)
-        err.print(f"safari: {stderr or 'AppleScript failed'}")
-        raise typer.Exit(2)
+            fail("no active tab", why=stderr, hint="open a page in Safari first", code=2)
+        fail(stderr or "AppleScript failed", code=2)
     return result.stdout.rstrip("\n") if want_stdout else ""
 
 
@@ -67,21 +69,21 @@ def escape_as(s: str) -> str:
 @app.command(help="Print the URL of the front tab.")
 def url():
     out = run_as('tell application "Safari" to return URL of current tab of front window')
-    console.print(out)
+    emit({"url": out}, human=lambda d, _m: print(d["url"]))
 
 
 # ── title ────────────────────────────────────────────────────────
 @app.command(help="Print the title (name) of the front tab.")
 def title():
     out = run_as('tell application "Safari" to return name of current tab of front window')
-    console.print(out)
+    emit({"title": out}, human=lambda d, _m: print(d["title"]))
 
 
 # ── text ─────────────────────────────────────────────────────────
 @app.command(help="Print the visible text of the front tab (no JS required).")
 def text():
     out = run_as('tell application "Safari" to return text of current tab of front window')
-    console.print(out)
+    emit({"text": out}, human=lambda d, _m: print(d["text"]))
 
 
 # ── tabs ─────────────────────────────────────────────────────────
@@ -101,18 +103,25 @@ end tell
 '''
     raw = run_as(script)
     rows = [l for l in raw.split("<<<EOL>>>") if l.strip()]
-    if not rows:
-        console.print("[dim](no tabs open)[/]")
-        return
-    table = Table(title="Safari tabs", show_header=True)
-    table.add_column("w/t", style="cyan")
-    table.add_column("title", style="bold")
-    table.add_column("URL", style="dim")
+    data = []
     for line in rows:
         parts = line.split("\t")
         if len(parts) >= 3:
-            table.add_row(parts[0], parts[1], parts[2])
-    console.print(table)
+            data.append({"wt": parts[0], "title": parts[1], "url": parts[2]})
+
+    def human(tabs, _meta):
+        if not tabs:
+            console.print("[dim](no tabs open)[/]")
+            return
+        table = Table(title="Safari tabs", show_header=True)
+        table.add_column("w/t", style="cyan")
+        table.add_column("title", style="bold")
+        table.add_column("URL", style="dim")
+        for t in tabs:
+            table.add_row(t["wt"], t["title"], t["url"])
+        console.print(table)
+
+    emit(data, {"count": len(data)}, human=human)
 
 
 # ── open ─────────────────────────────────────────────────────────
@@ -123,7 +132,10 @@ def open_cmd(target: str = typer.Argument(..., metavar="URL", help="URL to open.
         f'tell application "Safari" to make new document with properties {{URL:"{safe}"}}',
         want_stdout=False,
     )
-    console.print(f"opened: {target}")
+    emit(
+        {"action": "open", "url": target},
+        human=lambda d, _m: print(f"opened: {d['url']}"),
+    )
 
 
 # ── close ────────────────────────────────────────────────────────
@@ -137,7 +149,10 @@ tell application "Safari"
 end tell
 '''
     out = run_as(script)
-    console.print(f"closed: {out}" if out else "closed")
+    emit(
+        {"action": "close", "url": out or None},
+        human=lambda d, _m: print(f"closed: {d['url']}" if d["url"] else "closed"),
+    )
 
 
 # ── selection ────────────────────────────────────────────────────
@@ -147,10 +162,14 @@ def selection():
     out = run_as(
         f'tell application "Safari" to do JavaScript "{escape_as(js_expr)}" in current tab of front window'
     )
-    if not out:
-        console.print("[dim](no selection)[/]")
-        return
-    console.print(out)
+
+    def human(d, _m):
+        if not d["selection"]:
+            console.print("[dim](no selection)[/]")
+            return
+        print(d["selection"])
+
+    emit({"selection": out or None}, human=human)
 
 
 # ── js ───────────────────────────────────────────────────────────
@@ -160,7 +179,7 @@ def js(expression: str = typer.Argument(..., help="JS expression to evaluate."))
     out = run_as(
         f'tell application "Safari" to return (do JavaScript "{safe}" in current tab of front window) as string'
     )
-    console.print(out)
+    emit({"result": out}, human=lambda d, _m: print(d["result"]))
 
 
 if __name__ == "__main__":

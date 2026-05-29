@@ -14,6 +14,10 @@ from __future__ import annotations
 import sys as _sys
 from pathlib import Path as _Path
 _sys.path[:] = [p for p in _sys.path if _Path(p).resolve() != _Path(__file__).resolve().parent]
+# Add ../lib for shared output helpers (envelope, fail).
+_LIB = str(_Path(__file__).resolve().parent.parent / "lib")
+if _LIB not in _sys.path:
+    _sys.path.insert(0, _LIB)
 
 import subprocess
 from typing import Optional, List
@@ -22,6 +26,8 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from _envelope import emit, fail  # noqa: E402
+
 app = typer.Typer(
     rich_markup_mode=None,
     no_args_is_help=True,
@@ -29,7 +35,6 @@ app = typer.Typer(
     help="Atomic Mail.app ops — accounts / inbox / search / read / compose (no auto-send).",
 )
 console = Console()
-err = Console(stderr=True, style="red")
 
 
 def run_as(script: str) -> str:
@@ -38,8 +43,7 @@ def run_as(script: str) -> str:
         capture_output=True, text=True, check=False, timeout=120,
     )
     if result.returncode != 0:
-        err.print(f"mail: {result.stderr.strip() or 'AppleScript failed'}")
-        raise typer.Exit(2)
+        fail(result.stderr.strip() or "AppleScript failed", code=2)
     return result.stdout.rstrip("\n")
 
 
@@ -79,16 +83,23 @@ tell application "Mail"
 end tell
 '''
     raw = run_as(script)
-    table = Table(title="Mail accounts", show_header=True)
-    table.add_column("name", style="bold")
-    table.add_column("user", style="dim")
-    table.add_column("addresses", style="cyan")
+    data = []
     for line in raw.split("<<<EOL>>>"):
         line = line.strip()
         parts = line.split("\t")
         if len(parts) == 3:
-            table.add_row(parts[0], parts[1], parts[2])
-    console.print(table)
+            data.append({"name": parts[0], "user": parts[1], "addresses": parts[2]})
+
+    def human(rows, _meta):
+        table = Table(title="Mail accounts", show_header=True)
+        table.add_column("name", style="bold")
+        table.add_column("user", style="dim")
+        table.add_column("addresses", style="cyan")
+        for a in rows:
+            table.add_row(a["name"], a["user"], a["addresses"])
+        console.print(table)
+
+    emit(data, {"count": len(data)}, human=human)
 
 
 # ── inbox ────────────────────────────────────────────────────────
@@ -134,25 +145,36 @@ end tell
 '''
     raw = run_as(script)
     rows = [l.strip() for l in raw.split("<<<EOL>>>") if l.strip()]
-    if not rows:
-        console.print("[dim](inbox empty or no unread)[/]")
-        return
-    table = Table(
-        title=f"Inbox ({len(rows)}{' unread' if unread else ''})",
-        show_header=True,
-    )
-    table.add_column("#", justify="right", style="cyan")
-    table.add_column("subject", style="bold")
-    table.add_column("from", style="dim")
-    table.add_column("date", style="dim")
-    table.add_column("•", style="yellow")
-    for i, line in enumerate(rows, start=1):
+    data = []
+    for line in rows:
         parts = line.split("\t")
         if len(parts) >= 4:
-            subj, sndr, date, read = parts[0], parts[1], parts[2], parts[3]
-            mark = "" if read.lower() == "true" else "●"
-            table.add_row(str(i), subj, sndr, date, mark)
-    console.print(table)
+            data.append({
+                "subject": parts[0],
+                "from": parts[1],
+                "date": parts[2],
+                "read": parts[3].lower() == "true",
+            })
+
+    def human(items, _meta):
+        if not items:
+            console.print("[dim](inbox empty or no unread)[/]")
+            return
+        table = Table(
+            title=f"Inbox ({len(items)}{' unread' if unread else ''})",
+            show_header=True,
+        )
+        table.add_column("#", justify="right", style="cyan")
+        table.add_column("subject", style="bold")
+        table.add_column("from", style="dim")
+        table.add_column("date", style="dim")
+        table.add_column("•", style="yellow")
+        for i, m in enumerate(items, start=1):
+            mark = "" if m["read"] else "●"
+            table.add_row(str(i), m["subject"], m["from"], m["date"], mark)
+        console.print(table)
+
+    emit(data, {"count": len(data), "unread": unread}, human=human)
 
 
 # ── search ───────────────────────────────────────────────────────
@@ -193,19 +215,26 @@ end tell
 '''
     raw = run_as(script)
     rows = [l.strip() for l in raw.split("<<<EOL>>>") if l.strip()]
-    if not rows:
-        console.print(f"[dim](no inbox messages matching '{query}')[/]")
-        return
-    table = Table(title=f"Search: '{query}'", show_header=True)
-    table.add_column("#", justify="right", style="cyan")
-    table.add_column("subject", style="bold")
-    table.add_column("from", style="dim")
-    table.add_column("date", style="dim")
-    for i, line in enumerate(rows, start=1):
+    data = []
+    for line in rows:
         parts = line.split("\t")
         if len(parts) >= 3:
-            table.add_row(str(i), parts[0], parts[1], parts[2])
-    console.print(table)
+            data.append({"subject": parts[0], "from": parts[1], "date": parts[2]})
+
+    def human(items, _meta):
+        if not items:
+            console.print(f"[dim](no inbox messages matching '{query}')[/]")
+            return
+        table = Table(title=f"Search: '{query}'", show_header=True)
+        table.add_column("#", justify="right", style="cyan")
+        table.add_column("subject", style="bold")
+        table.add_column("from", style="dim")
+        table.add_column("date", style="dim")
+        for i, m in enumerate(items, start=1):
+            table.add_row(str(i), m["subject"], m["from"], m["date"])
+        console.print(table)
+
+    emit(data, {"count": len(data), "query": query}, human=human)
 
 
 # ── read ─────────────────────────────────────────────────────────
@@ -259,21 +288,24 @@ end tell
 '''
     raw = run_as(script)
     if not raw:
-        console.print(f"[dim](no inbox message with subject '{subject}')[/]")
-        raise typer.Exit(1)
+        fail(f"no inbox message with subject '{subject}'")
     parts = raw.split("<<<SEP>>>")
     if len(parts) != 5:
-        err.print("mail: unexpected output format")
-        raise typer.Exit(2)
+        fail("unexpected output format", code=2)
     s, snd, rcpt, d, body = parts
-    console.print(f"[bold cyan]Subject:[/] {s}")
-    console.print(f"[bold cyan]From:[/]    {snd}")
-    if rcpt:
-        console.print(f"[bold cyan]To:[/]      {rcpt}")
-    if d:
-        console.print(f"[bold cyan]Date:[/]    {d}")
-    console.print()
-    console.print(body)
+    data = {"subject": s, "from": snd, "to": rcpt, "date": d, "body": body}
+
+    def human(msg, _meta):
+        console.print(f"[bold cyan]Subject:[/] {msg['subject']}")
+        console.print(f"[bold cyan]From:[/]    {msg['from']}")
+        if msg["to"]:
+            console.print(f"[bold cyan]To:[/]      {msg['to']}")
+        if msg["date"]:
+            console.print(f"[bold cyan]Date:[/]    {msg['date']}")
+        console.print()
+        console.print(msg["body"])
+
+    emit(data, {"subject": subject}, human=human)
 
 
 # ── compose ──────────────────────────────────────────────────────
@@ -328,15 +360,27 @@ tell application "Mail"
 end tell
 '''
     name_out = run_as(script)
-    msg = f"draft opened: [bold]{name_out}[/] → {', '.join(to)}"
-    if cc:
-        msg += f" · cc {', '.join(cc)}"
-    if bcc:
-        msg += f" · bcc {', '.join(bcc)}"
-    if account:
-        msg += f" · from {account}"
-    msg += "\n[dim](review the Mail window and click Send when ready — no auto-send)[/]"
-    console.print(msg)
+    data = {
+        "action": "draft_opened",
+        "subject": name_out,
+        "to": to,
+        "cc": cc,
+        "bcc": bcc,
+        "account": account,
+    }
+
+    def human(d, _meta):
+        msg = f"draft opened: [bold]{d['subject']}[/] → {', '.join(d['to'])}"
+        if d["cc"]:
+            msg += f" · cc {', '.join(d['cc'])}"
+        if d["bcc"]:
+            msg += f" · bcc {', '.join(d['bcc'])}"
+        if d["account"]:
+            msg += f" · from {d['account']}"
+        msg += "\n[dim](review the Mail window and click Send when ready — no auto-send)[/]"
+        console.print(msg)
+
+    emit(data, {}, human=human)
 
 
 if __name__ == "__main__":
