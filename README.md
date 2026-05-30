@@ -177,7 +177,7 @@ utils statusline save monet -m "..."   # snapshot the live look as a theme
 utils statusline apply minimal         # switch to a saved theme
 ```
 
-A theme is a full, lossless snapshot of the live `statusline-command.sh` (plus `ditto.ans` if present), stored under `<dotfiles>/.claude/statusline-themes/<name>/` so it's versioned and synced with your dotfiles. `apply` auto-backs up the current look to the reserved `_prev` theme first, so `utils statusline apply _prev` always undoes the last switch.
+A theme snapshots the look-defining files under `<dotfiles>/.claude/statusline-themes/<name>/` (relative paths preserved), so it's versioned and synced with your dotfiles. By default the bundle is `statusline-command.sh` + `ditto.ans`; drop a `.bundle` manifest (one glob per line) in the themes dir to widen it — e.g. to a renderer and its config — and `apply` will restore the whole look, not just the `.sh`. Bulk data you leave out of the manifest (large sprite pools, …) stays shared. `apply` auto-backs up the current look to the reserved `_prev` theme first, so `utils statusline apply _prev` always undoes the last switch.
 
 ## Layout
 
