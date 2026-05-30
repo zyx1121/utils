@@ -41,6 +41,7 @@ _sys.path[:] = [p for p in _sys.path if _Path(p).resolve() != _Path(__file__).re
 import hashlib
 import json
 import re
+import shutil
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -152,42 +153,65 @@ def _tally() -> int:
 
 # ─── theme manager ──────────────────────────────────────────────────────────
 #
-# The live statusline-command.sh is a symlink into the dotfiles repo. We address
-# everything through its *resolved* parent so themes land beside it in dotfiles
-# regardless of where that repo lives. ditto.ans (the mascot art) sits next to it
-# and is bundled into a theme when present.
+# A theme snapshots a set of statusline files (the "bundle") under
+# statusline-themes/<name>/, preserving their relative paths. The bundle defaults
+# to statusline-command.sh + ditto.ans, but a `.bundle` manifest in the themes dir
+# (one glob per line) can widen it — e.g. to a renderer and its config — so that
+# `apply` restores a whole look. Bulk data the manifest omits (large sprite pools,
+# …) stays shared and version-controlled separately. Paths resolve through the
+# live symlink, so everything lands in the dotfiles repo wherever it lives.
 
 SAVE_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,39}$")   # user-savable
 APPLY_NAME_RE = re.compile(r"^_?[a-z0-9][a-z0-9-]{0,39}$")  # also reserved _prev
 
 ACTIVE_SCRIPT = Path.home() / ".claude" / "statusline-command.sh"
+DEFAULT_BUNDLE = ["statusline-command.sh", "ditto.ans"]
 
 
-def _dotfiles_claude() -> Path:
+def _claude_dir() -> Path:
     return ACTIVE_SCRIPT.resolve().parent
 
 
 def _themes_dir() -> Path:
-    return _dotfiles_claude() / "statusline-themes"
+    return _claude_dir() / "statusline-themes"
 
 
 def _live_script() -> Path:
-    return _dotfiles_claude() / "statusline-command.sh"
+    return _claude_dir() / "statusline-command.sh"
 
 
-def _live_ditto() -> Path:
-    return _dotfiles_claude() / "ditto.ans"
+def _bundle_spec() -> list[str]:
+    """Glob patterns to snapshot, from statusline-themes/.bundle (one per line)."""
+    try:
+        lines = (_themes_dir() / ".bundle").read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return DEFAULT_BUNDLE
+    pats = [ln.strip() for ln in lines if ln.strip() and not ln.lstrip().startswith("#")]
+    return pats or DEFAULT_BUNDLE
 
 
-def _bundle_hash(script: Path, ditto: Path) -> str | None:
-    """Content hash of a (script, optional ditto) pair — for active detection."""
-    if not script.is_file():
+def _bundle_relpaths() -> list[str]:
+    """Resolve the spec against the live dir → sorted relpaths of existing files."""
+    base = _claude_dir()
+    rels: set[str] = set()
+    for pat in _bundle_spec():
+        for p in base.glob(pat):
+            if p.is_file() and "statusline-themes" not in p.relative_to(base).parts:
+                rels.add(p.relative_to(base).as_posix())
+    return sorted(rels)
+
+
+def _hash_bundle(base: Path, relpaths: list[str]) -> str | None:
+    """Hash the given relpaths under base — for active-theme detection."""
+    if not (base / "statusline-command.sh").is_file():
         return None
     h = hashlib.sha256()
-    h.update(script.read_bytes())
-    h.update(b"\x00")
-    if ditto.is_file():
-        h.update(ditto.read_bytes())
+    for rel in relpaths:
+        f = base / rel
+        h.update(rel.encode())
+        h.update(b"\x00")
+        h.update(f.read_bytes() if f.is_file() else b"\x00missing")
+        h.update(b"\x00")
     return h.hexdigest()
 
 
@@ -198,26 +222,24 @@ def _read_meta(theme_dir: Path) -> dict:
         return {}
 
 
-def _snapshot(name: str, description: str) -> Path:
-    """Copy the live statusline (+ ditto) into themes/<name>/. Overwrites."""
-    src_script = _live_script()
-    if not src_script.is_file():
-        raise FileNotFoundError(f"no live statusline at {src_script}")
-    dest = _themes_dir() / name
-    dest.mkdir(parents=True, exist_ok=True)
-    (dest / "statusline-command.sh").write_bytes(src_script.read_bytes())
-    ditto = _live_ditto()
-    dest_ditto = dest / "ditto.ans"
-    if ditto.is_file():
-        dest_ditto.write_bytes(ditto.read_bytes())
-    elif dest_ditto.exists():
-        dest_ditto.unlink()  # stale art from a previous save under this name
+def _snapshot(name: str, description: str) -> list[str]:
+    """Copy the bundle into themes/<name>/ (preserving relpaths). Returns the files."""
+    relpaths = _bundle_relpaths()
+    if "statusline-command.sh" not in relpaths:
+        raise FileNotFoundError(f"no live statusline at {_live_script()}")
+    base, dest = _claude_dir(), _themes_dir() / name
+    shutil.rmtree(dest, ignore_errors=True)
+    for rel in relpaths:
+        d = dest / rel
+        d.parent.mkdir(parents=True, exist_ok=True)
+        d.write_bytes((base / rel).read_bytes())
     meta = {
         "description": description,
         "saved_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "files": relpaths,
     }
-    (dest / "theme.json").write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
-    return dest
+    (dest / "theme.json").write_text(json.dumps(meta, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    return relpaths
 
 
 def _cmd_list() -> int:
@@ -228,22 +250,20 @@ def _cmd_list() -> int:
         print(f"  ({tdir})")
         return 0
 
-    live = _bundle_hash(_live_script(), _live_ditto())
+    relpaths = _bundle_relpaths()
+    live = _hash_bundle(_claude_dir(), relpaths)
     active_seen = False
     print(f"statusline themes  ({tdir})\n")
     for t in themes:
-        h = _bundle_hash(t / "statusline-command.sh", t / "ditto.ans")
-        is_active = h is not None and h == live
+        is_active = live is not None and _hash_bundle(t, relpaths) == live
         active_seen = active_seen or is_active
-        marker = "●" if is_active else " "
         meta = _read_meta(t)
-        desc = meta.get("description") or ""
         saved = meta.get("saved_at", "")[:10]
-        line = f" {marker} {t.name:<20}"
+        line = f" {'●' if is_active else ' '} {t.name:<20}"
         if saved:
             line += f" {saved}"
-        if desc:
-            line += f"  {desc}"
+        if meta.get("description"):
+            line += f"  {meta['description']}"
         print(line)
     if not active_seen:
         print("\n(現役有未存的改動，不對應任何 theme — `save` 後才會被標記)")
@@ -280,11 +300,10 @@ def _cmd_save(args: list[str]) -> int:
         return 2
 
     existed = (_themes_dir() / name).is_dir()
-    dest = _snapshot(name, msg)
-    had_ditto = (dest / "ditto.ans").is_file()
+    files = _snapshot(name, msg)
     verb = "updated" if existed else "saved"
-    print(f"{verb} theme '{name}'  →  {dest}")
-    print(f"  statusline-command.sh{' + ditto.ans' if had_ditto else ''}")
+    print(f"{verb} theme '{name}'  →  {_themes_dir() / name}")
+    print(f"  bundled {len(files)} file(s): {', '.join(files)}")
     print("  commit dotfiles to sync across devices")
     return 0
 
@@ -299,13 +318,8 @@ def _cmd_apply(args: list[str]) -> int:
         return 2
 
     theme = _themes_dir() / name
-    theme_script = theme / "statusline-command.sh"
-    if not theme_script.is_file():
-        print(
-            f"statusline apply: no theme '{name}' "
-            f"(try `utils statusline list`)",
-            file=sys.stderr,
-        )
+    if not (theme / "statusline-command.sh").is_file():
+        print(f"statusline apply: no theme '{name}' (try `utils statusline list`)", file=sys.stderr)
         return 2
 
     # Auto-backup the live look so the switch is never destructive.
@@ -314,17 +328,17 @@ def _cmd_apply(args: list[str]) -> int:
         _snapshot("_prev", f"auto-backup before applying '{name}'")
         backed_up = True
 
-    _live_script().write_bytes(theme_script.read_bytes())
+    base, restored = _claude_dir(), []
+    for f in sorted(theme.rglob("*")):
+        if not f.is_file() or f.name == "theme.json":
+            continue
+        rel = f.relative_to(theme)
+        dest = base / rel
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(f.read_bytes())
+        restored.append(rel.as_posix())
 
-    theme_ditto = theme / "ditto.ans"
-    ditto_note = ""
-    if theme_ditto.is_file():
-        _live_ditto().write_bytes(theme_ditto.read_bytes())
-        ditto_note = " + ditto.ans"
-    elif _live_ditto().is_file():
-        ditto_note = "  (kept existing ditto.ans — this theme bundles none)"
-
-    print(f"applied theme '{name}'  →  statusline-command.sh{ditto_note}")
+    print(f"applied theme '{name}'  →  restored {len(restored)} file(s): {', '.join(restored)}")
     if backed_up:
         print("  previous look saved as '_prev' — `utils statusline apply _prev` to undo")
     print("  commit dotfiles to sync across devices")
@@ -335,11 +349,13 @@ HELP = """utils statusline — activity tally + theme manager
 
   utils statusline                       emit the activity tally (statusLine use)
   utils statusline list                  list saved themes; ● marks the live one
-  utils statusline save <name> [-m msg]  snapshot the live statusline as a theme
+  utils statusline save <name> [-m msg]  snapshot the bundle as a theme
   utils statusline apply <name>          switch to a saved theme (backs up to _prev)
 
-A theme is a full snapshot of statusline-command.sh (+ ditto.ans) under
-<dotfiles>/.claude/statusline-themes/<name>/.
+A theme snapshots a set of statusline files under
+<dotfiles>/.claude/statusline-themes/<name>/. The set defaults to
+statusline-command.sh + ditto.ans; a `.bundle` manifest (one glob per line) in
+the themes dir widens it so `apply` can restore a full look.
 """
 
 
