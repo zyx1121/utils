@@ -9,11 +9,11 @@ description: Use when revising an academic paper against reviewer comments (IEEE
 
 ## Workflow
 
-1. **抽 reviewer comments** — PDF annotation 走 `uvx pdfannots <pdf>` 一次抽全部（含 highlight / sticky-note / strike-through）
+1. **抽 reviewer comments** — PDF annotation 走 `uvx pdfannots <pdf>` 一次抽全部（含 highlight / sticky-note / strike-through）。⚠️ **抽出的文字與位置會失真**（reading-order 重組）：句子可能亂序（看似 paper bug，其實原始 `.tex` 正確）、strikethrough 範圍跨錯字（看似 reviewer「自相矛盾」）、極淡的標記可能漏看或誤判。判斷 reviewer 意圖前**務必 Read PDF 視覺頁面**（highlight 黃底 / 刪除線會 render 出來），以視覺標記為準，別只信抽出的文字
 2. **逐條 verdict**：對每條給 `✓ 已 cover / ⚠ 部分 cover / ✗ 未 cover / N/A`
 3. **依下面 10 條 checklist self-audit**：reviewer 沒明示但同類問題往往散在其他段落
 4. **改完跑 LaTeX 重編譯**確認頁數 + cross-ref 沒壞
-5. **回信給 reviewer 條列改了什麼** — 分塊條列、跟 reviewer 原 comment 對齊、過 claim 的設計判斷要附理由
+5. **回信給 reviewer 條列改了什麼** — 分塊條列、跟 reviewer 原 comment 對齊、過 claim 的設計判斷要附理由。**只回應 reviewer 真正標的 comment**：自己抽取 / 處理過程的 artifact（如 pdfannots 亂序句）不是 reviewer 的 comment，別寫進回信去「解釋它不用改」——對方 context 沒這東西，講了只困惑、還暴露內部流程
 
 ---
 
@@ -33,6 +33,8 @@ description: Use when revising an academic paper against reviewer comments (IEEE
 - IEEE Style Manual 標準：「全名 (縮寫)」前置（不是「縮寫 (全名)」）
 - Title / Abstract / 主文 各區獨立看，不能假設「上面定義過」
 - 同個縮寫不能在不同段落用兩種不同 expansion
+- **只出現一次的縮寫不要引入縮寫**：全篇只用一次就直接寫全名，別 `Fixed Satellite Service (FSS)` 之後再也不出現 FSS（reviewer 會逐個抓）
+- **首次出現可能藏在專名裡**：縮寫嵌在產品 / 專名中（如 `AFC DUT Test Harness` 的 DUT）也算首次出現，定義要放這裡、不是後面第一個普通名詞用法；專名無法用「全名 (縮寫)」就用「縮寫 (全名)」變通（`AFC DUT (device under test) Test Harness`），後面再用縮寫
 
 ## 3. 學術寫作慣例
 
@@ -85,6 +87,7 @@ description: Use when revising an academic paper against reviewer comments (IEEE
 - 是 reviewer **不強制方向、要 author 自己思考**的訊號
 - 對應動作：給選項評估後挑一個 + 給理由，不該無視
 - 設計判斷型問題（圖該不該改、Section 該不該重排）—— 用「保留 + 內文加 disambig 句」往往比動圖 cheaper 且精準
+- **斷言式的字面替換建議要先驗語法**：reviewer 寫 `X → Y` 直接替換，照字面套可能語意 / 語法出錯（`With the opening of` → `To open` 主詞錯位；刪定冠詞 `the` 不合文法）。抓底層意圖（去名詞化、減冗字），用語法正確的方式達成（改寫句子、或用所有格 `WFA's` 取代 `the`），而不是硬套字面
 
 ## 10. 拒絕「extension 視為 limitation」
 
@@ -103,6 +106,7 @@ Contribution 講「extensible / vendor-neutral / any X」時：
 - **Copy-editor + structural editor 混合**：wording 精確、學術慣例、全文一致是三大主軸
 - 內容層面用**問句**（不用斷言）讓 author 自己思考方向 —— 看到 question form 不是 "她不確定"，是 "她不想 dictate"
 - 視覺一致性跟 wording 一致性都會抓
+- reviewer 要「外觀一致」時可能跟專名大寫 / 語法 hyphen 規則衝突 —— 選破壞最小的方向統一（複合形容詞去 hyphen `DUT-side`→`DUT side` 比給名詞片語加 hyphen 自然；流程圖 node 全用 sentence case），別為了「跟她解釋規則」而抗拒統一
 - N=1 / 過 claim 是高風險區，提早收 claim 比硬撐安全
 
 ---
@@ -110,7 +114,7 @@ Contribution 講「extensible / vendor-neutral / any X」時：
 ## Anti-pattern
 
 - 把 reviewer comment 當「逐條 to-do」做完就收 —— 漏掉 self-audit 同類問題散在別處
-- 過度修導致 5 頁論文 overflow —— 改完一定要重編譯驗證頁數
+- 過度修導致 5 頁論文 overflow —— 改完一定要重編譯驗證頁數；真的 overflow 時收字落點選「reviewer 也要求精簡處（如 conclusion 重複 eval 的數據）+ checklist 5 句子精簡」，別砍 reviewer 要求新增的實質內容
 - 為了「處理 comment」加新概念但不在 paper 框架內 —— 增加 reviewer 下一輪 attack surface
 - 對 reviewer 設計判斷型 question 直接動圖／動架構 —— 通常用內文一句 disambig 更精準
 - Cross-check 用 generic reviewer agent 但用 top-tier venue 標準（會抓出超出 reviewer scope 的新問題） —— prompt 要明確「只 verify 對齊原 comments，不擴展 scope」
