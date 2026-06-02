@@ -349,11 +349,53 @@ end tell
 
 
 # ── set-notes ────────────────────────────────────────────────────
-@app.command(name="set-notes", help="Set the presenter notes (speaker notes) of a slide. Notes show in Keynote's presenter view during a slideshow but stay invisible to the audience — useful for drafting talk tracks alongside the slide.")
+@app.command(name="set-notes", help="Set the presenter notes (speaker notes) of a slide. Notes show in Keynote's presenter view during a slideshow but stay invisible to the audience — useful for drafting talk tracks alongside the slide. Batch many slides in one pass with --json instead of looping this command (one AppleScript round-trip, no per-call process startup).")
 def set_notes(
-    slide: int = typer.Option(..., "--slide", "-s", help="Slide number (1-based)"),
-    text: str = typer.Argument(..., help="Notes text. Use \\n for line breaks."),
+    text: Optional[str] = typer.Argument(None, help="Notes text. Use \\n for line breaks. Omit when using --json."),
+    slide: Optional[int] = typer.Option(None, "--slide", "-s", help="Slide number (1-based). Required unless --json is given."),
+    json_map: Optional[str] = typer.Option(
+        None, "--json",
+        help='Batch mode: a JSON object mapping slide number -> notes, e.g. \'{"1":"intro","2":"demo"}\'. Pass "-" to read it from stdin. Sets every slide in a single AppleScript pass.',
+    ),
 ):
+    if json_map is not None:
+        if slide is not None or text is not None:
+            fail("--json is batch mode — don't also pass --slide / text", code=2)
+        import json as _j
+
+        raw = _sys.stdin.read() if json_map == "-" else json_map
+        try:
+            mapping = _j.loads(raw)
+        except _j.JSONDecodeError as e:
+            fail(f"--json isn't valid JSON: {e}", hint='expected an object like {"1":"notes","2":"more"}', code=2)
+        if not isinstance(mapping, dict) or not mapping:
+            fail("--json must be a non-empty object mapping slide number -> notes", code=2)
+        try:
+            slides = sorted(int(k) for k in mapping)
+        except (TypeError, ValueError):
+            fail("--json keys must be slide numbers", code=2)
+        stmts = "\n        ".join(
+            f'set presenter notes of slide {int(k)} to "{prepare_text(str(v))}"'
+            for k, v in mapping.items()
+        )
+        script = f'''
+tell application "Keynote"
+    tell front document
+        {stmts}
+    end tell
+end tell
+'''
+        run_as(script)
+        emit(
+            {"action": "set-notes", "slides": slides},
+            human=lambda d, _m: console.print(
+                f"notes set on slides [cyan]{', '.join(map(str, d['slides']))}[/]"
+            ),
+        )
+        return
+
+    if slide is None or text is None:
+        fail("need --slide N and the notes text (or --json for batch mode)", code=2)
     script = f'''
 tell application "Keynote"
     tell front document
