@@ -34,9 +34,21 @@ SCRIPT_EXTS = (".py", ".sh", ".ts", ".js", ".mjs", ".rb", ".pl")
 
 SCRIPT_RUN_RE = re.compile(r"\b(python3?|node|bun|deno|sh|bash|zsh|ruby|perl)\s+\S")
 UV_RUN_RE = re.compile(r"\buv\s+run\b")
-UTILS_CMD_RE = re.compile(r"(?:^|[\s;&|()`])utils\s+([\w-]+)")
+# `utils <tool>` — bare, path-prefixed (`/abs/bin/utils x`), or after any `.../`.
+# The optional `\S*/` is what lets path/variable-form dispatcher calls register
+# instead of silently falling through to script-run.
+UTILS_CMD_RE = re.compile(r"(?:^|[\s;&|()`])(?:\S*/)?utils\s+([\w-]+)")
 PLUGIN_SCRIPT_RE = re.compile(r"/scripts/([\w.\-]+?)\.py\b")
-UTILS_META_FLAGS = {"--help", "-h", "--list"}
+
+# Real command set = scripts the plugin ships. Gates both false positives
+# (`utils 2`, prose containing "utils foo") and confirms path-form calls — a
+# captured name only counts as usage if it's an actual tool. Computed once;
+# a missing dir degrades to "recognize nothing" rather than crashing.
+try:
+    _SCRIPTS_DIR = Path(__file__).resolve().parent.parent / "scripts"
+    _KNOWN_TOOLS = {f.stem for f in _SCRIPTS_DIR.iterdir() if f.is_file() and not f.name.startswith(("_", "."))}
+except OSError:
+    _KNOWN_TOOLS = set()
 
 
 def _is_noise_bash(cmd: str) -> bool:
@@ -52,11 +64,11 @@ def _is_script_run(cmd: str) -> bool:
 
 
 def _is_utils_call(cmd: str) -> tuple[bool, str | None]:
-    # primary path: `utils <name> ...` via the dispatcher in bin/
-    # find first non-meta match (handles `utils --list && utils uuid` etc.)
+    # First real tool name wins — known-set gating means `utils --list && utils
+    # uuid` skips the flag and lands on uuid, and `utils 2` / prose never match.
     for match in UTILS_CMD_RE.finditer(cmd):
         name = match.group(1)
-        if name not in UTILS_META_FLAGS:
+        if name in _KNOWN_TOOLS:
             return True, name
     # fallback: direct invocation of a plugin script by path
     if "CLAUDE_PLUGIN_ROOT" in cmd or ".claude/plugins" in cmd:

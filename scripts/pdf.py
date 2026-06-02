@@ -14,6 +14,7 @@ _LIB = str(_Path(__file__).resolve().parent.parent / "lib")
 if _LIB not in _sys.path:
     _sys.path.insert(0, _LIB)
 
+import json
 import shutil
 import subprocess
 from enum import Enum
@@ -179,6 +180,8 @@ def text(
 def comments(
     file: Path = typer.Argument(..., help="PDF path."),
     pages: Optional[str] = typer.Option(None, "--pages", "-p", help="Page range, e.g. 1-3 (default: all)."),
+    fields: Optional[str] = typer.Option(None, "--fields", "-f", help="Comma-separated keys to keep: page,type,author,content,marked_text — shrinks output."),
+    out: Optional[str] = typer.Option(None, "--out", "-o", help="Write JSON to this file and emit only a summary (default: full list to stdout)."),
 ):
     _check_pdf(file)
     doc = pymupdf.open(file)
@@ -201,25 +204,35 @@ def comments(
             console.print("[dim](no annotations)[/]")
             return
         for r in d:
-            who = f" [dim]{r['author']}[/]" if r["author"] else ""
-            console.print(f"[cyan]p{r['page']}[/] [yellow]{r['type']}[/]{who}")
-            if r["marked_text"]:
+            who = f" [dim]{r.get('author')}[/]" if r.get("author") else ""
+            loc = f"[cyan]p{r['page']}[/] " if r.get("page") else ""
+            typ = f"[yellow]{r['type']}[/]" if r.get("type") else ""
+            console.print(f"{loc}{typ}{who}".strip())
+            if r.get("marked_text"):
                 console.print(f"  [dim]on:[/] {r['marked_text']}")
-            if r["content"]:
+            if r.get("content"):
                 for ln in r["content"].replace("\r", "\n").split("\n"):
                     if ln.strip():
                         console.print(f"  [bold]» {ln}[/]")
-        console.print(f"\n[dim]{m['note']}[/]")
+        if m.get("note"):
+            console.print(f"\n[dim]{m['note']}[/]")
 
-    emit(
-        rows,
-        {
-            "input": str(file),
-            "count": len(rows),
-            "note": "marked_text is extracted via quadpoints and may be imprecise; the reviewer's `content` is authoritative — verify against the visual markup.",
-        },
-        human=human,
-    )
+    note = "marked_text is extracted via quadpoints and may be imprecise; the reviewer's `content` is authoritative — verify against the visual markup."
+    if fields:
+        keep = [k.strip() for k in fields.split(",") if k.strip()]
+        rows = [{k: r.get(k) for k in keep} for r in rows]
+    meta = {"input": str(file), "count": len(rows), "note": note}
+
+    if out:
+        op = Path(out)
+        op.write_text(json.dumps({"data": rows, "metadata": meta}, ensure_ascii=False, indent=2), encoding="utf-8")
+        emit(
+            {"action": "comments", "input": str(file), "output": str(op), "count": len(rows)},
+            human=lambda d, _m: console.print(f"wrote {d['count']} annotation(s) → [bold]{op}[/]"),
+        )
+        return
+
+    emit(rows, meta, human=human)
 
 
 # ── compress ─────────────────────────────────────────────────────
@@ -356,6 +369,30 @@ def rotate(
     emit(
         {"action": "rotate", "input": str(file), "output": str(op), "deg": deg, "pages": [i + 1 for i in idx]},
         human=lambda d, _m: console.print(f"rotated {len(d['pages'])} page(s) by {deg}° → [bold]{op}[/]"),
+    )
+
+
+# ── render ───────────────────────────────────────────────────────
+@app.command(help="Render pages to PNG (e.g. to feed a vision model — sees layout/tables that text extraction loses).")
+def render(
+    file: Path = typer.Argument(..., help="PDF path."),
+    pages: Optional[str] = typer.Option(None, "--pages", "-p", help="Pages to render, e.g. 1-3 (default: all)."),
+    dpi: int = typer.Option(150, "--dpi", help="Resolution; 150 is a good default, 300 for fine detail."),
+    out: Optional[str] = typer.Option(None, "--out", "-o", help="Output path for a single page; multi-page writes <name>.p<N>.png next to the source."),
+):
+    _check_pdf(file)
+    doc = pymupdf.open(file)
+    idx = _parse_pages(pages, doc.page_count)
+    outs = []
+    for i in idx:
+        pix = doc[i].get_pixmap(dpi=dpi)
+        op = Path(out) if (out and len(idx) == 1) else file.with_name(f"{file.stem}.p{i + 1}.png")
+        pix.save(op)
+        outs.append(str(op))
+    emit(
+        {"action": "render", "input": str(file), "outputs": outs, "pages": [i + 1 for i in idx], "dpi": dpi},
+        human=lambda d, _m: console.print(
+            f"rendered {len(d['outputs'])} page(s) @ {dpi}dpi → [bold]{outs[0] if len(outs) == 1 else file.stem + '.p*.png'}[/]"),
     )
 
 
