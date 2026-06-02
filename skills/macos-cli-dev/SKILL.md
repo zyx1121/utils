@@ -1,6 +1,6 @@
 ---
 name: macos-cli-dev
-description: How to develop, iterate, sign, and ship a macOS Swift app entirely from the terminal — pure SwiftPM + a hand-rolled Makefile bundle + Apple Development cert codesign, never opening Xcode IDE. Triggers on "build a mac app", "做 mac app", "幫我寫一個 menubar app", "wrap swift binary into .app", "codesign mac app", "apple development cert hash", "TCC accessibility permission", "screen recording permission", "LSUIElement menubar-only", "NSStatusItem popover", "NSPanel overlay floating window", "AXUIElement under cursor", "CGEventTap intercept mouse", "ScreenCaptureKit screenshot excluding self", "怎麼簽 mac app", "怎麼不開 xcode 寫 mac app", "swift package mac app bundle 結構", "sourcekit cannot find type in scope but build passes", "Cocoa vs CG 座標系". Skip when user explicitly wants Xcode IDE features (live SwiftUI preview, LLDB GUI, Instruments profiling), provisioning profiles, push notifications / iCloud entitlements, or is submitting to Mac App Store.
+description: Develop, sign, and ship a macOS Swift app from the terminal — SwiftPM + a hand-rolled Makefile bundle + Apple Development codesign, no Xcode. Triggers on "build a mac app", "做 mac app", "menubar app", "wrap swift binary into .app", "codesign mac app", "TCC / screen recording permission", "LSUIElement menubar-only", "NSPanel overlay", "CGEventTap", "ScreenCaptureKit", "怎麼不開 xcode 寫 mac app". Skip for Xcode IDE features, provisioning profiles, or Mac App Store.
 ---
 
 # /utils:macos-cli-dev — develop macOS apps from the terminal

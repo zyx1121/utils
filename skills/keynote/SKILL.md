@@ -7,6 +7,8 @@ description: Compose Keynote presentations with the `utils keynote` building blo
 
 The plugin ships a `keynote` script with ~21 atomic AppleScript ops against Keynote.app. This skill composes them into full slide-deck workflows.
 
+> **鐵則：永遠走 `utils keynote` 子命令，不要 drop 到 raw `osascript tell application "Keynote"`。** 每個讀寫都有對應 atom — 讀用 `get-slide` / `list-slides` / `list-shapes`，寫用 `set-title` / `set-body` / `set-notes` / `set-shape-text`。手刻 osascript 等於重造 `prepare_text` 的 escaping、丟掉 JSON envelope，是 `/utils:review` 最常抓到的 drift。要一次設多張 presenter notes，用 `set-notes --json '{"1":"…","2":"…"}'`（單次 AppleScript pass），不要 loop 單張或寫 `/tmp` 腳本。
+
 ## Building blocks
 
 ```bash
@@ -34,6 +36,7 @@ utils keynote list-shapes    --slide N                    # discover shape indic
 utils keynote set-title      --slide N <text>
 utils keynote set-body       --slide N <text>
 utils keynote set-notes      --slide N <text>             # presenter notes (speaker view only)
+utils keynote set-notes      --json '{"1":"…","2":"…"}'   # batch: set many slides' notes in one pass ("-" = stdin)
 utils keynote set-shape-text --slide N --shape M <text>   # non-default placeholders
 utils keynote set-position   --slide N --shape M [--x X --y Y] [--w W] [--h H]  # nudge existing shape
 utils keynote delete-shape   --slide N --shape M          # remove a placeholder/shape (use list-shapes to find index)
