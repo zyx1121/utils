@@ -212,6 +212,7 @@ skills/
 │   ├── SKILL.md
 │   └── scripts/                journal-session
 ├── stats/SKILL.md              /utils:stats — raw numbers, no narrative
+├── teaching-slides/SKILL.md   recorded-course deck rules — one point / slide, ≤ 6 lines, big font, prefer images
 ├── utils/SKILL.md              "before writing a script, try `utils <cmd>` first"
 └── weekly/SKILL.md             /utils:weekly — week-end journal with Δ vs last week
 agents/
