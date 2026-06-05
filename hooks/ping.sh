@@ -2,6 +2,7 @@
 # Play a random sound from ~/.claude/ping/ on Stop / Notification.
 # Fires when Claude finishes a turn or needs user attention.
 # Drop sound files into ~/.claude/ping/ (mp3/wav/m4a/aiff/aac). Empty dir = silent.
+# Volume defaults to 0.3 (~30%); override per-machine with CLAUDE_PING_VOLUME.
 
 set -e
 
@@ -21,7 +22,9 @@ shopt -u nocaseglob
 
 file="${files[RANDOM % ${#files[@]}]}"
 
+volume="${CLAUDE_PING_VOLUME:-0.3}"
+
 # Detach so the hook returns immediately; afplay finishes on its own.
-( afplay "$file" >/dev/null 2>&1 & disown ) >/dev/null 2>&1
+( afplay -v "$volume" "$file" >/dev/null 2>&1 & disown ) >/dev/null 2>&1
 
 exit 0
