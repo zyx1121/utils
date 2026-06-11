@@ -49,7 +49,9 @@ description: Use when user is creating, editing, or reviewing a Keynote / slide 
 
 每張內容頁：
 
-- **Title = 這頁的 claim 或 dash 句型。** 例 `Skill — instructions Claude can load on demand`。`Background` / `Details` / `Discussion` 這種空殼分類名禁用。
+- **Title = 這頁的 claim 或 dash 句型。** 例 `Skill — Instructions Claude Can Load on Demand`。`Background` / `Details` / `Discussion` 這種空殼分類名禁用。
+- **Title 用 Title Case**：實詞首字母大寫；冠詞 / 並列連接詞 / 短介係詞（`a` / `the` / `and` / `of` / `for` / `to` / `in` / `on` / `with`…）小寫；首字、末字、dash 或 colon 後的第一個字一律大寫。
+- **Title 求短**：一行塞得下，~8 個英文字內；細節讓給 body，不把完整句子塞滿橫幅。
 - **Body 用 nested bullets 表達層級**（多數情況）；檔案結構用 ASCII tree、N 個項目並排比較用 table — 見下面 *Body patterns*。
 - 由上到下要有 narrative：claim → evidence → implication，不是 random walk。
 
@@ -155,6 +157,7 @@ Keynote bullet 有層級（L0 / L1 / L2 / L3），同層必同類：
 - [ ] Slide 1: title / 日期 `YYYY/M/D` / 中文姓名 詹詠翔 三項齊全
 - [ ] Slide 2: outline 每條都是 section label，不是句子
 - [ ] 每張內容頁 title 是 claim 或 dash 句型，不是空殼分類名
+- [ ] Title 是 Title Case 且夠短（~8 字內、一行塞得下）
 - [ ] Body 用對 pattern：nested bullets / ASCII tree / comparison table 三選一
 - [ ] 同 nest level 的 bullets 是同類關聯
 - [ ] L0 句尾用 `:`，L1+ 不用結尾標點
