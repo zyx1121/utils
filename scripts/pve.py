@@ -33,6 +33,7 @@ if _LIB not in _sys.path:
     _sys.path.insert(0, _LIB)
 
 import base64
+import json
 import os
 import re
 import shlex
@@ -83,6 +84,16 @@ def ssh_run(host: str, *parts: str, capture: bool = True) -> str:
             hint=f"verify `ssh {host}` works in your terminal first",
         )
     return result.stdout if capture else ""
+
+
+def _ssh_try(host: str, *parts: str) -> subprocess.CompletedProcess:
+    """Run a command on `host` via SSH WITHOUT hard-failing — caller inspects returncode.
+
+    Unlike ssh_run (which calls fail() and exits on non-zero), this returns the
+    completed process so the caller can react — e.g. roll a Caddyfile back to its
+    backup when a reload fails on a config that passed `caddy validate`."""
+    remote = " ".join(shlex.quote(str(p)) for p in parts)
+    return subprocess.run(["ssh", host, remote], capture_output=True, text=True, check=False)
 
 
 def parse_qm_list(output: str) -> list[dict]:
@@ -349,7 +360,7 @@ while i < n:
                 depth += lines[j].count('{') - lines[j].count('}')
                 block.append(lines[j])
                 j += 1
-            if re.search(r'reverse_proxy\\s+' + re.escape(ip) + r'(:[0-9]+)?\\b', ''.join(block)):
+            if re.search(r'(?<![\\d.])' + re.escape(ip) + r'(:[0-9]+)?(?![\\d.])', ''.join(block)):
                 domains.extend(doms)
             i = j
             continue
@@ -859,33 +870,274 @@ print('removed' if removed else 'not_found')
 """
 
 
+# Shared brace-depth block walker — the single source of truth for "what is a
+# top-level domain block", so list / upsert agree with find-by-ip / remove (which
+# already walk this way). Skips the global `{ ... }` options block (empty head)
+# and column-0 comments. Prepended to the list + upsert remote scripts.
+_CADDY_WALK_PRELUDE = """
+import sys, os, re, json, subprocess
+
+def parse_blocks(lines):
+    out = []
+    i, n = 0, len(lines)
+    while i < n:
+        stripped = lines[i].lstrip()
+        if '{' in stripped and not stripped.startswith('#'):
+            head = stripped.split('{', 1)[0].strip()
+            if head:
+                heads = [d.strip() for d in head.split(',') if d.strip()]
+                depth = lines[i].count('{') - lines[i].count('}')
+                j = i + 1
+                while j < n and depth > 0:
+                    depth += lines[j].count('{') - lines[j].count('}')
+                    j += 1
+                out.append((heads, i, j))
+                i = j
+                continue
+        i += 1
+    return out
+"""
+
+_CADDY_LIST_SCRIPT = _CADDY_WALK_PRELUDE + """
+with open(sys.argv[1]) as f:
+    lines = f.readlines()
+out = []
+for heads, s, e in parse_blocks(lines):
+    block = ''.join(lines[s:e])
+    out.append({
+        'domains': heads,
+        'upstreams': re.findall(r'reverse_proxy\\s+(\\S+)', block),
+        'tls': bool(re.search(r'(?m)^\\s*tls\\s+', block)),
+        'routed': ('handle' in block) or ('@' in block),
+    })
+print(json.dumps(out))
+"""
+
+# One remote round-trip does read -> splice -> fmt -> validate -> atomic swap, so
+# there is no time-of-check/time-of-use window between separate ssh calls. The spec
+# is a single JSON argv (base64'd by _run_remote_python), so domains/paths/bodies are
+# never interpolated into a shell. Always prints ONE json line and exits 0 — status
+# is in the payload, not the exit code (so ssh_run does not hard-fail on rejections).
+_CADDY_UPSERT_SCRIPT = _CADDY_WALK_PRELUDE + """
+def caddy_bin():
+    import shutil
+    for p in ('/usr/bin/caddy', '/usr/local/bin/caddy'):
+        if os.path.exists(p):
+            return p
+    return shutil.which('caddy')
+
+def render(domains, head_body):
+    body = head_body.replace('\\r\\n', '\\n').split('\\n')
+    while body and not body[0].strip():
+        body.pop(0)
+    while body and not body[-1].strip():
+        body.pop()
+    inner = '\\n'.join(('\\t' + ln.rstrip()) if ln.strip() else '' for ln in body)
+    return ', '.join(domains) + ' {\\n' + inner + '\\n}\\n'
+
+spec = json.loads(sys.argv[1])
+path = spec['path']
+domains = spec['domains']
+on_exists = spec.get('on_exists', 'update')
+dry_run = bool(spec.get('dry_run', False))
+allow_shrink = bool(spec.get('allow_shrink', False))
+new_block = render(domains, spec['head_body'])
+
+with open(path) as f:
+    lines = f.readlines()
+want = set(domains)
+matches = [(h, s, e) for h, s, e in parse_blocks(lines) if want & set(h)]
+if len(matches) > 1:
+    print(json.dumps({'status': 'multi-block', 'blocks': [m[0] for m in matches]})); sys.exit(0)
+match = matches[0] if matches else None
+
+if match is not None:
+    heads, s, e = match
+    if on_exists == 'skip':
+        print(json.dumps({'status': 'exists', 'head': heads})); sys.exit(0)
+    if on_exists == 'fail':
+        print(json.dumps({'status': 'error', 'head': heads})); sys.exit(0)
+    dropped = sorted(set(heads) - want)
+    if dropped and not dry_run and not allow_shrink:
+        print(json.dumps({'status': 'would-shrink', 'head': heads, 'dropped': dropped})); sys.exit(0)
+    new_lines = lines[:s] + [new_block] + lines[e:]
+    action, shrunk = 'update', (dropped or None)
+else:
+    body = lines[:]
+    while body and body[-1].strip() == '':
+        body.pop()
+    new_lines = body + (['\\n'] if body else []) + [new_block]
+    action, shrunk = 'add', None
+
+new_text = ''.join(new_lines)
+tmp = os.path.join(os.path.dirname(os.path.abspath(path)), '.caddy.utils.tmp.%d' % os.getpid())
+with open(tmp, 'w') as f:
+    f.write(new_text)
+os.chmod(tmp, 0o644)
+
+cb = caddy_bin()
+validated = False
+if cb:
+    subprocess.run([cb, 'fmt', '--overwrite', tmp], capture_output=True, text=True)
+    vr = subprocess.run([cb, 'validate', '--config', tmp, '--adapter', 'caddyfile'],
+                        capture_output=True, text=True)
+    if vr.returncode != 0:
+        os.remove(tmp)
+        print(json.dumps({'status': 'invalid', 'error': (vr.stderr or vr.stdout).strip()[-2000:]}))
+        sys.exit(0)
+    validated = True
+    with open(tmp) as f:
+        new_text = f.read()
+
+with open(path) as f:
+    cur = f.read()
+# Compare against a fmt'd copy of the live file so a true no-op is detected even when
+# the live file carries pre-existing non-canonical formatting (else we'd reformat the
+# whole file + reload for nothing).
+cur_cmp = cur
+if cb:
+    ctmp = tmp + '.cur'
+    with open(ctmp, 'w') as f:
+        f.write(cur)
+    subprocess.run([cb, 'fmt', '--overwrite', ctmp], capture_output=True, text=True)
+    with open(ctmp) as f:
+        cur_cmp = f.read()
+    os.remove(ctmp)
+if new_text == cur_cmp:
+    os.remove(tmp)
+    print(json.dumps({'status': 'unchanged', 'head': domains})); sys.exit(0)
+
+if dry_run:
+    import difflib
+    diff = ''.join(difflib.unified_diff(cur.splitlines(True), new_text.splitlines(True),
+                                         'live/Caddyfile', 'proposed/Caddyfile'))
+    os.remove(tmp)
+    print(json.dumps({'status': 'dry-run', 'action': action, 'validated': validated,
+                      'head': domains, 'shrunk_from': shrunk, 'diff': diff[:6000]}))
+    sys.exit(0)
+
+bak = path + '.utils.bak'
+try:
+    with open(bak, 'w') as fb:
+        fb.write(cur)
+except Exception:
+    bak = None
+os.replace(tmp, path)
+print(json.dumps({'status': 'written', 'action': action, 'validated': validated,
+                  'head': domains, 'shrunk_from': shrunk, 'backup': bak}))
+"""
+
+_CADDY_RESTORE_SCRIPT = """
+import sys, os
+path, bak = sys.argv[1], sys.argv[2]
+if os.path.exists(bak):
+    os.replace(bak, path)
+    print('restored')
+else:
+    print('no_backup')
+"""
+
+
+def _caddy_list_blocks() -> list[dict]:
+    """Top-level Caddy blocks with per-block detail (domains / upstreams / tls / routed)."""
+    out = _run_remote_python(GATEWAY_HOST, _CADDY_LIST_SCRIPT, GATEWAY_CADDYFILE)
+    try:
+        return json.loads(out.strip() or "[]")
+    except json.JSONDecodeError:
+        return []
+
+
+def _caddy_upsert(domains: list[str], head_body: str, on_exists: str,
+                  dry_run: bool, allow_shrink: bool = False) -> dict:
+    """Render + validate + atomically swap a domain block on the gateway. Returns the
+    status payload; does NOT reload (caller reloads so it can roll back on failure)."""
+    spec = {"path": GATEWAY_CADDYFILE, "domains": domains, "head_body": head_body,
+            "on_exists": on_exists, "dry_run": dry_run, "allow_shrink": allow_shrink}
+    out = _run_remote_python(GATEWAY_HOST, _CADDY_UPSERT_SCRIPT, json.dumps(spec))
+    last = (out.strip().splitlines() or [""])[-1]
+    try:
+        return json.loads(last)
+    except json.JSONDecodeError:
+        fail("could not parse caddy upsert result", why=out[:500],
+             hint="run `ssh gateway` and inspect the Caddyfile by hand")
+
+
+def _caddy_reload_or_restore(backup: Optional[str]) -> None:
+    """Reload Caddy; if reload fails (e.g. a config that passed `caddy validate` but
+    references an unreadable cert path), restore the backup, reload last-good, then fail."""
+    r = _ssh_try(GATEWAY_HOST, "sh", "-c", CADDY_RELOAD_CMD)
+    if r.returncode == 0:
+        # Reload is good — the transient backup is no longer needed. Remove it so it
+        # doesn't linger as an untracked file in the gateway's git checkout.
+        if backup:
+            _ssh_try(GATEWAY_HOST, "rm", "-f", backup)
+        return
+    restored = False
+    if backup:
+        _run_remote_python(GATEWAY_HOST, _CADDY_RESTORE_SCRIPT, GATEWAY_CADDYFILE, backup)
+        _ssh_try(GATEWAY_HOST, "sh", "-c", CADDY_RELOAD_CMD)
+        restored = True
+    fail("caddy reload failed" + (" — restored backup" if restored else ""),
+         why=(r.stderr or "").strip()[-500:] or "reload returned non-zero",
+         hint="likely an unreadable --tls cert path; see `ssh gateway journalctl -u caddy`")
+
+
+def _caddy_fail_if_bad(res: dict, heads: list[str]) -> None:
+    """Map the terminal-error upsert statuses to a clean fail(). Applied to every
+    upsert result (incl. the post-confirm shrink re-run) so none slips through."""
+    status = res.get("status")
+    if status == "invalid":
+        fail("caddy validate rejected the block",
+             why=res.get("error", "").strip()[-800:],
+             hint="fix the directives / --body; the live Caddyfile was not touched")
+    if status == "error":
+        fail(f"domain already in Caddyfile: {', '.join(res.get('head', heads))}",
+             hint="--on-exists update to replace it, or remove it first")
+    if status == "multi-block":
+        blocks = res.get("blocks", [])
+        fail(f"{', '.join(heads)} spans {len(blocks)} separate Caddy blocks",
+             why="; ".join(", ".join(b) for b in blocks),
+             hint="these hostnames live in different stanzas — remove them first, or target one block's hostnames")
+
+
 @app.command(help="Manage Caddy reverse-proxy stanzas on the gateway.")
 def caddy(
-    domain: Optional[str] = typer.Argument(None, help="Public domain (required for add/remove)"),
-    upstream: Optional[str] = typer.Argument(None, help="Upstream host:port (required for add)"),
+    domain: Optional[str] = typer.Argument(
+        None, help="Public domain head. Comma-join for one multi-host block: 'a.tw,*.a.tw'. Required for add/remove."),
+    upstream: Optional[str] = typer.Argument(
+        None, help="Upstream host:port (simple form). Mutually exclusive with --body."),
     action: str = typer.Option("add", "--action", help="add | remove | list"),
-    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation for remove"),
+    tls: Optional[str] = typer.Option(
+        None, "--tls", help="TLS for the simple form: two paths 'CERT KEY', or 'internal'. Not valid with --body."),
+    body: Optional[str] = typer.Option(
+        None, "--body", help="Escape hatch: verbatim block body (matchers / handle / headers / anything). '-' reads stdin. Excludes upstream + --tls."),
+    on_exists: str = typer.Option(
+        "update", "--on-exists", help="When the domain block already exists: update (replace, default) | skip | fail."),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Render + validate on a scratch copy and show the diff; write nothing."),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation for remove / for replacing or shrinking an existing block."),
 ) -> None:
     if action == "list":
-        out = ssh_run(
-            GATEWAY_HOST, "sh", "-c",
-            f"grep -E '^[A-Za-z0-9*].*[{{][[:space:]]*$' {shlex.quote(GATEWAY_CADDYFILE)} || true",
-        )
-        domains = []
-        for line in out.splitlines():
-            head = line.split("{", 1)[0].strip()
-            if head:
-                domains.extend(d.strip() for d in head.split(","))
-        emit({"domains": domains, "caddyfile": GATEWAY_CADDYFILE})
+        blocks = _caddy_list_blocks()
+        domains = [d for b in blocks for d in b.get("domains", [])]
+        emit({"domains": domains, "blocks": blocks, "caddyfile": GATEWAY_CADDYFILE})
         return
 
     if not domain:
         fail("domain required", hint="utils pve caddy <domain> ...")
+    heads = [d.strip() for d in domain.split(",") if d.strip()]
+    for h in heads:
+        if not re.fullmatch(r"[A-Za-z0-9*._-]+", h):
+            fail(f"invalid domain token {h!r}",
+                 why="whitespace / braces / shell metacharacters are not allowed in a domain head",
+                 hint="comma-join hostnames with no spaces: 'a.tw,*.a.tw'")
 
     if action == "remove":
         if not yes and not typer.confirm(f"remove Caddy block for {domain!r}?"):
             fail("aborted", why="user did not confirm", hint="pass --yes to skip")
-        if not _remove_caddy_domain(domain):
+        # Match by any single head token — the remove script deletes the whole block
+        # once one of its hostnames matches, so a comma-joined arg works via heads[0].
+        if not _remove_caddy_domain(heads[0]):
             emit({"domain": domain, "action": "skipped", "reason": "domain not in Caddyfile"})
             return
         _caddy_reload()
@@ -894,18 +1146,84 @@ def caddy(
 
     if action != "add":
         fail(f"unknown action {action!r}", hint="use add | remove | list")
+    if on_exists not in ("update", "skip", "fail"):
+        fail(f"invalid --on-exists {on_exists!r}", hint="update | skip | fail")
 
-    if not upstream:
-        fail("upstream required for add", hint="utils pve caddy <domain> <host:port>")
-    check_cmd = f"grep -qE '^{re.escape(domain)}\\\\b' {shlex.quote(GATEWAY_CADDYFILE)} && echo present || echo absent"
-    present = ssh_run(GATEWAY_HOST, "sh", "-c", check_cmd).strip()
-    if present == "present":
-        emit({"domain": domain, "upstream": upstream, "action": "skipped", "reason": "domain already in Caddyfile"})
+    # Resolve the block body: simple form (upstream [+ --tls]) XOR escape hatch (--body).
+    body_from_stdin = False
+    if body is not None:
+        if upstream:
+            fail("give an upstream OR --body, not both", hint="--body is the escape hatch for a full block body")
+        if tls:
+            fail("--tls is only for the simple form", hint="put the `tls` directive inside --body yourself")
+        if body == "-":
+            if _sys.stdin.isatty():
+                fail("--body - expects piped input", hint="echo '...' | utils pve caddy <domain> --body -")
+            raw = _sys.stdin.read()
+            body_from_stdin = True
+        else:
+            raw = body
+        if not raw.strip():
+            fail("--body is empty", hint="pass block-body text, or pipe it via `--body -`")
+        head_body = raw
+    else:
+        if not upstream:
+            fail("upstream required for add", hint="utils pve caddy <domain> <host:port>  (or --body for a full block)")
+        # The simple form splices `reverse_proxy <upstream>` verbatim — keep it to a single
+        # host:port token so it can't smuggle braces/newlines that mint a second site block
+        # (caddy validate would accept the resulting valid-but-unintended config).
+        if not re.fullmatch(r"[A-Za-z0-9_.:/%\[\]-]+", upstream):
+            fail(f"invalid upstream {upstream!r}",
+                 why="want a single host:port token — no whitespace / braces / newlines",
+                 hint="use --body for anything richer than one reverse_proxy upstream")
+        tls_line = ""
+        if tls:
+            toks = tls.split()
+            if toks == ["internal"]:
+                tls_line = "tls internal\n"
+            elif len(toks) == 2 and all(t.startswith("/") for t in toks):
+                tls_line = f"tls {toks[0]} {toks[1]}\n"
+            else:
+                fail("invalid --tls",
+                     why="want the literal 'internal' or two absolute paths 'CERT KEY'",
+                     hint='--tls "/etc/caddy/certs/x/fullchain.pem /etc/caddy/certs/x/privkey.pem"')
+        head_body = f"{tls_line}reverse_proxy {upstream}"
+
+    res = _caddy_upsert(heads, head_body, on_exists, dry_run)
+    _caddy_fail_if_bad(res, heads)
+    status = res.get("status")
+
+    if status == "exists":
+        emit({"domains": heads, "action": "skipped", "reason": "already present (--on-exists skip)"})
         return
-    stanza = f"\n{domain} {{\n    reverse_proxy {upstream}\n}}\n"
-    ssh_run(GATEWAY_HOST, "sh", "-c", f"printf %s {shlex.quote(stanza)} >> {shlex.quote(GATEWAY_CADDYFILE)}")
-    _caddy_reload()
-    emit({"domain": domain, "upstream": upstream, "action": "added"})
+    if status == "would-shrink":
+        dropped = res.get("dropped", [])
+        if body_from_stdin and not yes:
+            fail("update would drop domains from a multi-host block",
+                 why=f"replacing it drops {', '.join(dropped)}, and `--body -` consumed stdin so there's no TTY to confirm",
+                 hint="pass --yes, or include every hostname in the domain arg")
+        if not yes and not typer.confirm(
+            f"{', '.join(heads)} matches an existing block also serving {', '.join(dropped)} — "
+            f"replacing it will DROP {', '.join(dropped)}. Continue?"):
+            fail("aborted", why="update would drop domains from a multi-host block",
+                 hint="include every hostname in the domain arg, or pass --yes")
+        res = _caddy_upsert(heads, head_body, on_exists, dry_run, allow_shrink=True)
+        _caddy_fail_if_bad(res, heads)
+        status = res.get("status")
+    if status == "dry-run":
+        emit({"domains": heads, "action": res.get("action"), "validated": res.get("validated"),
+              "shrunk_from": res.get("shrunk_from")},
+             metadata={"dry_run": True, "diff": res.get("diff", "")})
+        return
+    if status == "unchanged":
+        emit({"domains": heads, "action": "unchanged", "reason": "block already matches"})
+        return
+    if status != "written":
+        fail(f"unexpected caddy upsert status {status!r}", why=json.dumps(res)[:500])
+
+    _caddy_reload_or_restore(res.get("backup"))
+    emit({"domains": heads, "action": res.get("action"), "validated": res.get("validated"),
+          "backup": res.get("backup"), "shrunk_from": res.get("shrunk_from")})
 
 
 if __name__ == "__main__":
