@@ -1,6 +1,6 @@
 {
   "name": "utils",
-  "version": "0.23.0",
+  "version": "0.24.0",
   "description": "Loki's personal Claude Code plugin — agent-first CLI toolbox plus skills, agents, and hooks. Each script is a self-contained PEP 723 executable; hooks watch ad-hoc scripts and propose new ones when patterns repeat.",
   "author": {
     "name": "Loki",
@@ -9,5 +9,5 @@
   "homepage": "https://github.com/zyx1121/utils",
   "repository": "https://github.com/zyx1121/utils",
   "license": "MIT",
-  "keywords": ["cli", "toolbox", "lifecycle", "self-growing", "agent-first", "pep-723", "journal", "observability", "daily-report"]
+  "keywords": ["cli", "toolbox", "lifecycle", "self-growing", "agent-first", "pep-723", "observability"]
 }

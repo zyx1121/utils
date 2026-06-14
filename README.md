@@ -193,31 +193,18 @@ hooks/
 lib/
 └── _envelope.py                shared output helpers — emit / fail / parse_host
 skills/
-├── catchup/SKILL.md            /utils:catchup — fill in missed daily/weekly reports
-├── daily/SKILL.md              /utils:daily — day-end journal (Initiative + PPP + Numbers)
-├── journal/                    journal report architecture (loaded by daily / weekly)
-│   ├── SKILL.md
-│   └── scripts/                journal-collect, journal-install-cron
 ├── keynote/SKILL.md            Keynote 簡報 building blocks (AppleScript-based)
 ├── keynote-style/SKILL.md      Loki's deck style guide — cover/outline/content rules + Chinese speaker notes
 ├── method/                     procedure router — picks the right methodology (rca / cove / steelman / ...)
 │   ├── SKILL.md
 │   └── assets/                 14 methodologies as progressive-disclosure refs
-├── morning/SKILL.md            /utils:morning — day-start briefing from journal / TODO / calendar / mail
-├── now/SKILL.md                /utils:now — last-N-hours snapshot
 ├── post/SKILL.md               /utils:post — idea → ~1500-word blog → private gist
 ├── pve/SKILL.md                PVE / gateway atoms — wraps utils pve subcommands
 ├── review/SKILL.md             /utils:review — find candidates (usage log) + lint personal skills (static)
-├── session/                    /utils:session — summarize one or many Claude Code sessions
-│   ├── SKILL.md
-│   └── scripts/                journal-session
-├── stats/SKILL.md              /utils:stats — raw numbers, no narrative
 ├── teaching-slides/SKILL.md   recorded-course deck rules — one point / slide, ≤ 6 lines, big font, prefer images
-├── utils/SKILL.md              "before writing a script, try `utils <cmd>` first"
-└── weekly/SKILL.md             /utils:weekly — week-end journal with Δ vs last week
+└── utils/SKILL.md              "before writing a script, try `utils <cmd>` first"
 agents/
 ├── pve-provisioner.md          one-shot VM provisioning: clone + DNS + forward + Caddy + smoke test
-├── session-summarizer.md       per-session journal entry writer (dispatched in parallel by /utils:session)
 └── utils-promoter.md           candidate → scripts/<name>.<ext> → PR
 scripts/
 ├── statusline.py               `utils statusline` — activity tally + theme save/apply/list
@@ -231,11 +218,8 @@ scripts/
 ~/.claude/data/utils/
 ├── observations.jsonl   everything observe.py saw
 ├── reviewed.jsonl       candidates already promoted or dismissed
-├── events/
-│   └── YYYY-MM-DD.jsonl session + skill / agent events (events.py)
-└── journal/
-    ├── sessions/        per-session markdown summaries
-    └── reports/         YYYY/MM/DD.md daily, YYYY/W<NN>.md weekly
+└── events/
+    └── YYYY-MM-DD.jsonl session + skill / agent events (events.py)
 ```
 
 No auto-rotation yet. Trim by hand if it ever gets big.
