@@ -37,7 +37,7 @@ DESC_MAX = 500
 
 def find_skills(root: Path, recursive: bool) -> list[Path]:
     """SKILL.md files under root. Default top-level only (skips sync artifacts
-    like ~/skills/.agents/skills/...)."""
+    like ~/.kilo/skills/.agents/skills/...)."""
     if recursive:
         return sorted(
             f for f in root.rglob("SKILL.md")
@@ -80,11 +80,11 @@ def lint_skill(path: Path) -> list[str]:
 
 
 def main(
-    path: Path = typer.Argument(Path.home() / "skills", help="Directory to scan (top-level SKILL.md files)."),
+    path: Path = typer.Argument(Path.home() / ".kilo" / "skills", help="Directory to scan (top-level SKILL.md files)."),
     recursive: bool = typer.Option(False, "--recursive", "-r", help="Recurse into subdirectories (off by default to skip sync artifacts)."),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Show clean skills too."),
 ):
-    """Lint Claude Code skills under <path>. Default path: ~/skills/ (Loki's source repo)."""
+    """Lint Claude Code skills under <path>. Default path: ~/.kilo/skills/ (Loki's kilo source repo)."""
     if not path.exists():
         fail(f"{path} doesn't exist", hint="pass a directory containing */SKILL.md")
     skills = find_skills(path, recursive)
