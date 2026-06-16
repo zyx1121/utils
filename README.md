@@ -11,7 +11,7 @@
 
 Loki's personal CLI toolbox for agents. Each command is a self-contained executable — Python (PEP 723), bash, AppleScript — looked up by name and `exec`'d; runtime declared via shebang. One dispatcher, no package management.
 
-> **Scope:** utils is *just the CLI* now. The agent machinery it used to bundle — skills, hooks, subagents, and the observe → review → promote lifecycle — moved to Loki's personal config repo (`kilo`), which symlinks into `~/.claude/`. utils is no longer wired as a Claude Code plugin; the leftover `hooks/`, `agents/`, and `.claude-plugin/` are retired packaging superseded by kilo.
+> **Scope:** utils is *just the CLI* now. The agent machinery it used to bundle — skills, hooks, subagents, and the observe → review → promote lifecycle — moved to Loki's personal config repo (`kilo`), which symlinks into `~/.claude/`. utils is no longer a Claude Code plugin — just scripts on PATH via the shim below.
 
 ## Install
 
@@ -111,8 +111,6 @@ scripts/
 ├── skill-lint.py    `utils skill-lint` — lint SKILL.md frontmatter
 └── *                each self-contained, exec bit + shebang (.py PEP 723, .sh, .applescript, ...)
 ```
-
-`hooks/`, `agents/`, and `.claude-plugin/` still sit in the tree but are **retired plugin packaging** — the live versions run from the kilo repo. They'll be removed once confirmed dead.
 
 ## Why this design
 
