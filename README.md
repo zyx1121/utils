@@ -192,22 +192,13 @@ hooks/
 └── ping.sh                     plays a random sound from ~/.claude/ping/ on turn-end / attention
 lib/
 └── _envelope.py                shared output helpers — emit / fail / parse_host
-skills/
-├── keynote/SKILL.md            Keynote 簡報 building blocks (AppleScript-based)
-├── keynote-style/SKILL.md      Loki's deck style guide — cover/outline/content rules + Chinese speaker notes
-├── method/                     procedure router — picks the right methodology (rca / cove / steelman / ...)
-│   ├── SKILL.md
-│   └── assets/                 14 methodologies as progressive-disclosure refs
-├── post/SKILL.md               /utils:post — idea → ~1500-word blog → private gist
-├── pve/SKILL.md                PVE / gateway atoms — wraps utils pve subcommands
-├── review/SKILL.md             /utils:review — find candidates (usage log) + lint personal skills (static)
-├── teaching-slides/SKILL.md   recorded-course deck rules — one point / slide, ≤ 6 lines, big font, prefer images
-└── utils/SKILL.md              "before writing a script, try `utils <cmd>` first"
 agents/
 ├── pve-provisioner.md          one-shot VM provisioning: clone + DNS + forward + Caddy + smoke test
 └── utils-promoter.md           candidate → scripts/<name>.<ext> → PR
 scripts/
 ├── statusline.py               `utils statusline` — activity tally + theme save/apply/list
+├── skill-usage.py              `utils skill-usage` — per-skill adoption / recency / co-occurrence / dormant
+├── skill-lint.py               `utils skill-lint` — lint SKILL.md frontmatter
 └── *                           each one self-contained, exec bit + shebang
                                 (.py PEP 723, .sh, .applescript, ...)
 ```
