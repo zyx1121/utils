@@ -9,11 +9,13 @@
 
 # utils
 
-Agent-first CLI toolbox. Hooks watch the throwaway scripts your agent writes, propose new ones when patterns repeat. Each command is a self-contained executable — Python (PEP 723), bash, AppleScript, whatever — runtime declared via shebang. The plugin ships everything; no Poetry, no PyPI, no package management.
+Loki's personal CLI toolbox for agents. Each command is a self-contained executable — Python (PEP 723), bash, AppleScript — looked up by name and `exec`'d; runtime declared via shebang. One dispatcher, no package management.
+
+> **Scope:** utils is *just the CLI* now. The agent machinery it used to bundle — skills, hooks, subagents, and the observe → review → promote lifecycle — moved to Loki's personal config repo (`kilo`), which symlinks into `~/.claude/`. utils is no longer wired as a Claude Code plugin; the leftover `hooks/`, `agents/`, and `.claude-plugin/` are retired packaging superseded by kilo.
 
 ## Install
 
-The dispatcher goes on PATH with a one-line shim that execs the repo — edits to `scripts/` are then live, no reinstall:
+The dispatcher goes on PATH with a one-line shim that `exec`s the repo — edits to `scripts/` are live, no reinstall:
 
 ```bash
 printf '#!/usr/bin/env bash\nexec "$HOME/utils/bin/utils" "$@"\n' > ~/.local/bin/utils && chmod +x ~/.local/bin/utils
@@ -21,30 +23,29 @@ printf '#!/usr/bin/env bash\nexec "$HOME/utils/bin/utils" "$@"\n' > ~/.local/bin
 
 Prerequisite: [`uv`](https://docs.astral.sh/uv/) on PATH — the first Python run fetches declared deps to uv's cache, later runs are near-instant.
 
-The hooks and agents also ship as a Claude Code plugin (`/plugin marketplace add zyx1121/marketplace` then `/plugin install utils@zyx1121`). Enabled, the hooks write local-only jsonl under `~/.claude/data/utils/` — `observations.jsonl` (ad-hoc script activity) and `events/YYYY-MM-DD.jsonl` (session + skill / agent invocations). Nothing is uploaded.
-
-## What's inside
-
-The `utils` dispatcher (`bin/utils`, on PATH via the shim above) looks up `scripts/<cmd>` and `exec`s it. Use it like a regular CLI:
+## Usage
 
 ```bash
 utils --help              # list available commands
+utils --list              # bare names, authoritative
 
 # basics
 utils uuid --count 3
 utils hash README.md --algo sha256
 utils ssl-check github.com
 utils tokens prompt.txt --model opus
+utils skill-usage                            # per-skill adoption / dormant
+utils skill-lint                             # lint SKILL.md frontmatter
 
 # macOS atoms
 echo "hi" | utils clipboard write
-utils screenshot                            # → /tmp/screenshot.png
+utils screenshot                             # → /tmp/screenshot.png
 utils notify "build done" --sound Glass
 utils reminders add "ping 建超 tomorrow"
 utils calendar list                          # this week
 utils mail search "ICCCAS"
 utils keynote open ~/Desktop/deck.key
-utils safari url                            # frontmost tab URL
+utils safari url                             # frontmost tab URL
 ```
 
 Under the hood, each command is a self-contained executable. Most are PEP 723 Python:
@@ -86,7 +87,7 @@ The envelope shape is fixed:
 
 `data` is whatever the command produced; `metadata` carries provenance bits an agent might branch on (source path, format flag, etc). On failure, `error` gives three fields — `message` for what broke, `why` for the underlying cause, `hint` for what to try next. Errors are documentation: agents read them before they read `--help`.
 
-Shared helpers live in [`lib/_envelope.py`](lib/_envelope.py) — `emit`, `fail`, `parse_host`. Every Python script imports them; see [`scripts/ssl-check.py`](scripts/ssl-check.py) for the canonical shape and [`agents/utils-promoter.md`](agents/utils-promoter.md) for the import shim new scripts must use.
+Shared helpers live in [`lib/_envelope.py`](lib/_envelope.py) — `emit`, `fail`, `parse_host`. Every Python script imports them; see [`scripts/ssl-check.py`](scripts/ssl-check.py) for the canonical shape.
 
 ## Per-command setup
 
@@ -98,131 +99,26 @@ A few commands need a one-time macOS-side tweak before they work:
 
   Plain `safari url` / `title` / `text` / `tabs` / `open` / `close` work out of the box without this. The `text` op alone covers most "extract page content" agent flows — JS is only needed when you want the current selection or arbitrary DOM queries.
 
-## Lifecycle
-
-```
-[agent writes throwaway script]
-            │
-            ▼
-   PostToolUse hook (cheap, no LLM)
-            │
-            ▼
-~/.claude/data/utils/observations.jsonl
-            │
-            ▼
-   /review (you, on demand)
-            │   cluster repeats
-            │   flag failing scripts
-            ▼
-  approve candidate → utils-promoter agent
-            │
-            ▼
-       PR to this repo
-            │
-            ▼
-       merge → next session has it
-```
-
-Three layers, kept separate so the cheap thing stays cheap:
-
-- **Observe** (hook) — pure logging. No LLM, no network, ~1ms per event. Filters noise (`ls`, `cat`, `git`, …), records ad-hoc script writes / runs and invocations of this plugin's own scripts.
-- **Analyze** (the `/review` skill — now lives in the kilo skills repo, not shipped here) — read the log, cluster semantically, present candidates as a table. You decide which to promote.
-- **Promote** (`utils-promoter` agent) — write the new script, open a PR. You merge.
-
-## Session events
-
-A second hook (`events.py`) covers a different question than the throwaway-script lifecycle above: *what happened in this session* — which skills fired, which subagents got spawned, when sessions started and stopped. One record per event, one file per UTC day:
-
-```
-~/.claude/data/utils/events/YYYY-MM-DD.jsonl
-```
-
-Schema is intentionally narrow — only metadata, never the skill arguments, agent prompts, or any file contents touched. That's the privacy boundary: skip them at write time, not redact at read time.
-
-Captured:
-
-- `SessionStart` / `Stop` → `{kind:"session", phase, session, cwd, source}`
-- `PostToolUse` for `Skill` / `Task` only → `{kind:"tool", tool, name|subagent, ok}`
-
-Opt out by creating `~/.claude/utils.local.md`:
-
-```markdown
----
-observe: off
----
-```
-
-The hook returns early when this is present. Remove the file or set `observe: full` to re-enable. Daily files give natural rotation (`find … -mtime +30 -delete` works), and sync across machines is just `rsync` of that directory.
-
-### Statusline
-
-A one-line tally of today's activity. Add to `~/.claude/settings.json`:
-
-```json
-{ "statusLine": { "type": "command", "command": "utils statusline" } }
-```
-
-Output:
-
-```
-utils · skill 7 · task 2 · last method 12s
-```
-
-The fail counter only shows when there are any (`fail 1`). With opt-out on, output is `utils · off`; before any events fire today, `utils · no events yet`. Pure stdlib, no LLM call, reads the same `events/YYYY-MM-DD.jsonl`.
-
-#### Themes
-
-The statusline script is a thing you tinker with — colors, layout, mascot art. The same command snapshots and switches whole looks, so an experiment never clobbers a look you liked:
-
-```
-utils statusline list                  # list themes; ● marks the live one
-utils statusline save monet -m "..."   # snapshot the live look as a theme
-utils statusline apply minimal         # switch to a saved theme
-```
-
-A theme snapshots the look-defining files under `<dotfiles>/.claude/statusline-themes/<name>/` (relative paths preserved), so it's versioned and synced with your dotfiles. By default the bundle is `statusline-command.sh` + `ditto.ans`; drop a `.bundle` manifest (one glob per line) in the themes dir to widen it — e.g. to a renderer and its config — and `apply` will restore the whole look, not just the `.sh`. Bulk data you leave out of the manifest (large sprite pools, …) stays shared. `apply` auto-backs up the current look to the reserved `_prev` theme first, so `utils statusline apply _prev` always undoes the last switch.
-
 ## Layout
 
 ```
-.claude-plugin/plugin.json      manifest
 bin/
-└── utils                       dispatcher — exec uv run on the right script
-hooks/
-├── hooks.json                  PostToolUse → observe / events; SessionStart + Stop → events; Stop / Notification → ping
-├── observe.py                  append-only jsonl logger — throwaway script activity (Write / Bash)
-├── events.py                   append-only jsonl logger — session + Skill / Task (metadata only, opt-out via utils.local.md)
-└── ping.sh                     plays a random sound from ~/.claude/ping/ on turn-end / attention
+└── utils            dispatcher — looks up scripts/<cmd> and exec's it
 lib/
-└── _envelope.py                shared output helpers — emit / fail / parse_host
-agents/
-├── pve-provisioner.md          one-shot VM provisioning: clone + DNS + forward + Caddy + smoke test
-└── utils-promoter.md           candidate → scripts/<name>.<ext> → PR
+└── _envelope.py     shared output helpers — emit / fail / parse_host
 scripts/
-├── statusline.py               `utils statusline` — activity tally + theme save/apply/list
-├── skill-usage.py              `utils skill-usage` — per-skill adoption / recency / co-occurrence / dormant
-├── skill-lint.py               `utils skill-lint` — lint SKILL.md frontmatter
-└── *                           each one self-contained, exec bit + shebang
-                                (.py PEP 723, .sh, .applescript, ...)
+├── skill-usage.py   `utils skill-usage` — per-skill adoption / recency / co-occurrence / dormant
+├── skill-lint.py    `utils skill-lint` — lint SKILL.md frontmatter
+└── *                each self-contained, exec bit + shebang (.py PEP 723, .sh, .applescript, ...)
 ```
 
-## Storage
-
-```
-~/.claude/data/utils/
-├── observations.jsonl   everything observe.py saw
-├── reviewed.jsonl       candidates already promoted or dismissed
-└── events/
-    └── YYYY-MM-DD.jsonl session + skill / agent events (events.py)
-```
-
-No auto-rotation yet. Trim by hand if it ever gets big.
+`hooks/`, `agents/`, and `.claude-plugin/` still sit in the tree but are **retired plugin packaging** — the live versions run from the kilo repo. They'll be removed once confirmed dead.
 
 ## Why this design
 
-An earlier version was a Poetry-managed PyPI package with a global `utils` CLI. That fit human use — `pip install zyx-utils` once, type `utils foo` in any terminal. But the real consumer is the agent, and PyPI carried: build pipeline, version management, sync-across-devices ceremony, release tagging, signing. All overhead for someone who doesn't need a global binary.
+An earlier version was a Poetry-managed PyPI package with a global `utils` CLI. That fit human use — `pip install zyx-utils` once, type `utils foo` in any terminal. But the real consumer is the agent, and PyPI carried: build pipeline, version management, sync ceremony, release tagging, signing — all overhead for someone who doesn't need a published binary.
 
-So: plugin ships scripts directly. Agent runs them via `uv run`. New device gets everything from `claude plugin install`. No `pip` step, no version mismatch, no PyPI release dance, no Poetry.
+So: scripts live in the repo, the dispatcher `exec`s them via `uv run`, and a one-line shim puts `utils` on PATH. Edit a script, it's live. No `pip`, no version mismatch, no PyPI release dance, no Poetry.
 
 ## License
 
