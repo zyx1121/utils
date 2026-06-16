@@ -107,7 +107,7 @@ A few commands need a one-time macOS-side tweak before they work:
 ~/.claude/data/utils/observations.jsonl
             │
             ▼
-   /utils:review (you, on demand)
+   /review (you, on demand)
             │   cluster repeats
             │   flag failing scripts
             ▼
@@ -123,7 +123,7 @@ A few commands need a one-time macOS-side tweak before they work:
 Three layers, kept separate so the cheap thing stays cheap:
 
 - **Observe** (hook) — pure logging. No LLM, no network, ~1ms per event. Filters noise (`ls`, `cat`, `git`, …), records ad-hoc script writes / runs and invocations of this plugin's own scripts.
-- **Analyze** (`/utils:review` skill) — read the log, cluster semantically, present candidates as a table. You decide which to promote.
+- **Analyze** (the `/review` skill — now lives in the kilo skills repo, not shipped here) — read the log, cluster semantically, present candidates as a table. You decide which to promote.
 - **Promote** (`utils-promoter` agent) — write the new script, open a PR. You merge.
 
 ## Session events
