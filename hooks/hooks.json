@@ -25,10 +25,6 @@
         "hooks": [
           {
             "type": "command",
-            "command": "echo 'Method router (/utils:method) is active. Before any non-trivial coding/decision task, invoke this skill FIRST to classify and emit [METHOD: <name>], then load the matching procedure from skills/method/assets/. Trivial single-action tasks fall through [METHOD: null] silently.'"
-          },
-          {
-            "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/hooks/events.py"
           }
         ]

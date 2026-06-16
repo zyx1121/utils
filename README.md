@@ -13,16 +13,19 @@ Agent-first CLI toolbox. Hooks watch the throwaway scripts your agent writes, pr
 
 ## Install
 
-```
-/plugin marketplace add zyx1121/marketplace
-/plugin install utils@zyx1121
+The dispatcher goes on PATH with a one-line shim that execs the repo — edits to `scripts/` are then live, no reinstall:
+
+```bash
+printf '#!/usr/bin/env bash\nexec "$HOME/utils/bin/utils" "$@"\n' > ~/.local/bin/utils && chmod +x ~/.local/bin/utils
 ```
 
-Prerequisite: [`uv`](https://docs.astral.sh/uv/) on PATH. After install, two hooks start writing local-only jsonl logs under `~/.claude/data/utils/` — `observations.jsonl` (ad-hoc script activity) and `events/YYYY-MM-DD.jsonl` (session + skill / agent invocations). Both stay on disk; nothing is uploaded.
+Prerequisite: [`uv`](https://docs.astral.sh/uv/) on PATH — the first Python run fetches declared deps to uv's cache, later runs are near-instant.
+
+The hooks and agents also ship as a Claude Code plugin (`/plugin marketplace add zyx1121/marketplace` then `/plugin install utils@zyx1121`). Enabled, the hooks write local-only jsonl under `~/.claude/data/utils/` — `observations.jsonl` (ad-hoc script activity) and `events/YYYY-MM-DD.jsonl` (session + skill / agent invocations). Nothing is uploaded.
 
 ## What's inside
 
-A `utils` dispatcher (`bin/utils`) is installed onto PATH automatically by the plugin. Use it like a regular CLI:
+The `utils` dispatcher (`bin/utils`, on PATH via the shim above) looks up `scripts/<cmd>` and `exec`s it. Use it like a regular CLI:
 
 ```bash
 utils --help              # list available commands
