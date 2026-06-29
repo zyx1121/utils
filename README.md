@@ -44,7 +44,6 @@ utils notify "build done" --sound Glass
 utils reminders add "ping 建超 tomorrow"
 utils calendar list                          # this week
 utils mail search "ICCCAS"
-utils keynote open ~/Desktop/deck.key
 utils safari url                             # frontmost tab URL
 ```
 
