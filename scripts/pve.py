@@ -53,6 +53,9 @@ PVE_TEMPLATE = int(os.environ.get("UTILS_PVE_TEMPLATE", "9000"))
 GATEWAY_IP = os.environ.get("UTILS_PVE_GATEWAY_IP", "10.10.10.1")
 GATEWAY_DNS_HOSTS = os.environ.get("UTILS_PVE_GATEWAY_DNS", "/home/user/gateway/dns/hosts")
 GATEWAY_CADDYFILE = os.environ.get("UTILS_PVE_GATEWAY_CADDY", "/home/user/gateway/Caddyfile")
+# Gateway env file (CF_API_TOKEN_ZYX etc.) — loaded for `caddy validate` so {env.*}
+# placeholders in tls dns blocks resolve; without it validate rejects the whole config.
+GATEWAY_ENV = os.environ.get("UTILS_PVE_GATEWAY_ENV", "/home/user/gateway/.env")
 # Gateway runs Caddy natively under systemd (ex-docker). Override for other setups.
 CADDY_RELOAD_CMD = os.environ.get("UTILS_PVE_CADDY_RELOAD", "sudo systemctl reload caddy")
 VM_BRIDGE = os.environ.get("UTILS_PVE_BRIDGE", "vnet10")
@@ -1082,6 +1085,18 @@ dry_run = bool(spec.get('dry_run', False))
 allow_shrink = bool(spec.get('allow_shrink', False))
 new_block = render(domains, spec['head_body'])
 
+# Load the gateway env file (e.g. CF_API_TOKEN_ZYX) so `caddy validate` can resolve
+# {env.*} placeholders in tls dns blocks — without it the cloudflare DNS provider
+# sees an empty token and rejects the whole config.
+caddy_env = dict(os.environ)
+_envf = spec.get('env_file')
+if _envf and os.path.exists(_envf):
+    for _ln in open(_envf):
+        _ln = _ln.strip()
+        if _ln and not _ln.startswith('#') and '=' in _ln:
+            _k, _v = _ln.split('=', 1)
+            caddy_env[_k.strip()] = _v.strip().strip('"').strip("'")
+
 with open(path) as f:
     lines = f.readlines()
 want = set(domains)
@@ -1119,7 +1134,7 @@ validated = False
 if cb:
     subprocess.run([cb, 'fmt', '--overwrite', tmp], capture_output=True, text=True)
     vr = subprocess.run([cb, 'validate', '--config', tmp, '--adapter', 'caddyfile'],
-                        capture_output=True, text=True)
+                        capture_output=True, text=True, env=caddy_env)
     if vr.returncode != 0:
         os.remove(tmp)
         print(json.dumps({'status': 'invalid', 'error': (vr.stderr or vr.stdout).strip()[-2000:]}))
@@ -1191,7 +1206,8 @@ def _caddy_upsert(domains: list[str], head_body: str, on_exists: str,
     """Render + validate + atomically swap a domain block on the gateway. Returns the
     status payload; does NOT reload (caller reloads so it can roll back on failure)."""
     spec = {"path": GATEWAY_CADDYFILE, "domains": domains, "head_body": head_body,
-            "on_exists": on_exists, "dry_run": dry_run, "allow_shrink": allow_shrink}
+            "on_exists": on_exists, "dry_run": dry_run, "allow_shrink": allow_shrink,
+            "env_file": GATEWAY_ENV}
     out = _run_remote_python(GATEWAY_HOST, _CADDY_UPSERT_SCRIPT, json.dumps(spec))
     last = (out.strip().splitlines() or [""])[-1]
     try:
