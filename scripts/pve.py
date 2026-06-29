@@ -70,7 +70,10 @@ app = typer.Typer(
     add_completion=False,
     help="PVE / gateway atoms — list / status / start / stop / ssh / clone / forward / dns / caddy via SSH aliases.",
 )
-console = Console()
+# Human/plan output goes to STDERR so stdout carries only the emit() JSON envelope
+# (the machine contract). Without this, console.print(plan) before a confirm
+# pollutes stdout and breaks envelope consumers (e.g. keel's pve.ts parseEnvelope).
+console = Console(stderr=True)
 
 
 def ssh_run(host: str, *parts: str, capture: bool = True) -> str:
