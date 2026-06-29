@@ -835,19 +835,8 @@ def create_ct(
 
     ssh_run(PVE_HOST, "pct", "start", str(new_vmid))
 
-    # Apply swappiness=10 inside the container.
-    # Unprivileged LXC shares /proc/sys with the host — `sysctl -w` exits 0 but
-    # the kernel ignores the write (read-only namespace). We still call it for
-    # privileged containers where it works, and always write the persistent
-    # sysctl.d file so the setting survives the next reboot (or future
-    # privilege change). Wait briefly for the container to reach init.
-    import time as _time
-    _time.sleep(5)
-    ssh_run(PVE_HOST, "pct", "exec", str(new_vmid), "--", "sysctl", "-w", "vm.swappiness=10")
-    ssh_run(
-        PVE_HOST, "pct", "exec", str(new_vmid), "--",
-        "sh", "-c", "echo 'vm.swappiness=10' > /etc/sysctl.d/99-swappiness.conf",
-    )
+    # swappiness is a host-level sysctl (not namespaced); set once on the PVE host,
+    # all CTs inherit. --swap above gives the cgroup swap limit.
 
     if add_forward:
         ssh_run(
