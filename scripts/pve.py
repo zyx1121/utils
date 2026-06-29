@@ -737,6 +737,145 @@ def clone(
     })
 
 
+# ── create-ct ───────────────────────────────────────────────────
+# Default template: prefer UTILS_PVE_CT_TEMPLATE env; fall back to the
+# standard ubuntu-24.04 vztmpl that ships on every fresh Proxmox local storage.
+_CT_TEMPLATE_DEFAULT = os.environ.get(
+    "UTILS_PVE_CT_TEMPLATE",
+    "local:vztmpl/ubuntu-24.04-standard_24.04-2_amd64.tar.zst",
+)
+
+
+@app.command("create-ct", help="Create a new LXC container from a vztmpl; wires 50<vmid>:22 forward + spoke isolation (mirror of clone but pct-native).")
+def create_ct(
+    name: str = typer.Argument(..., help="Hostname for the new container"),
+    template: str = typer.Option(_CT_TEMPLATE_DEFAULT, "--template", envvar="UTILS_PVE_CT_TEMPLATE", help="vztmpl volid (default: ubuntu-24.04-standard)"),
+    vmid: Optional[int] = typer.Option(None, "--vmid", help="Target VMID (default: next free ≥200)"),
+    ip: Optional[str] = typer.Option(None, "--ip", help="Internal IP (default: <subnet>.<VMID>)"),
+    cores: int = typer.Option(2, "--cores", help="Number of CPU cores"),
+    ram: int = typer.Option(2048, "--ram", help="RAM in MB"),
+    disk: int = typer.Option(8, "--disk", help="Root filesystem size in GB"),
+    swap: int = typer.Option(4096, "--swap", help="Swap in MB (default: 4096)"),
+    storage: str = typer.Option("local-lvm", "--storage", help="Storage pool for rootfs"),
+    unprivileged: bool = typer.Option(True, "--unprivileged/--privileged", help="Run as unprivileged container (default: true)"),
+    nesting: bool = typer.Option(False, "--nesting/--no-nesting", help="Enable nesting feature (default: false)"),
+    no_forward: bool = typer.Option(False, "--no-forward", help="Skip the auto-added 50<vmid>:22 SSH forward"),
+    no_isolate: bool = typer.Option(False, "--no-isolate", help=f"Skip east-west isolation (spoke firewall group {FW_GROUP!r})"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation"),
+) -> None:
+    # Collect all allocated VMIDs (both QEMU VMs + LXC containers).
+    all_guests = list_guests()
+    existing_ids = {g["vmid"] for g in all_guests}
+
+    if vmid is not None:
+        if vmid in existing_ids:
+            fail(f"VMID {vmid} already in use", hint="run `utils pve list` to see allocated IDs")
+        new_vmid = vmid
+    else:
+        # LXC lives in the 2xx segment (200-299).
+        new_vmid = 200
+        while new_vmid in existing_ids:
+            new_vmid += 1
+
+    if ip is None:
+        prefix_parts = GATEWAY_IP.split(".")
+        if len(prefix_parts) != 4 or not (1 <= new_vmid <= 254):
+            fail(
+                f"can't auto-derive IP for VMID {new_vmid}",
+                why=f"convention is <subnet>.<VMID> with VMID in 1-254 (GATEWAY_IP={GATEWAY_IP!r})",
+                hint="pass --ip explicitly or pick a VMID in 200-254",
+            )
+        ip = f"{'.'.join(prefix_parts[:3])}.{new_vmid}"
+
+    forward_port = 50000 + new_vmid
+    add_forward = not no_forward and 1 <= forward_port <= 65535
+    isolate = not no_isolate and bool(FW_GROUP)
+    unpriv_flag = 1 if unprivileged else 0
+
+    plan = (
+        f"create-ct VMID {new_vmid} as {name!r}, template {template}, "
+        f"IP {ip}/24, gw {GATEWAY_IP}, bridge {VM_BRIDGE}, "
+        f"cores {cores}, RAM {ram}MB, disk {disk}GB, swap {swap}MB, "
+        f"{'unprivileged' if unprivileged else 'privileged'}"
+    )
+    if nesting:
+        plan += ", nesting=1"
+    if add_forward:
+        plan += f", SSH forward :{forward_port}→{ip}:22"
+    if isolate:
+        plan += f", isolated (spoke firewall group {FW_GROUP!r})"
+    console.print(plan)
+    if not yes and not typer.confirm("proceed?"):
+        fail("aborted", why="user did not confirm", hint="pass --yes to skip")
+
+    # Build pct create argument list. net0 is set inline (no _set_net0 — that's qm-only).
+    net0_spec = (
+        f"name=eth0,bridge={VM_BRIDGE},ip={ip}/24,gw={GATEWAY_IP},"
+        f"firewall={'1' if isolate else '0'}"
+    )
+    pct_create_args = [
+        "pct", "create", str(new_vmid), template,
+        "--hostname", name,
+        "--rootfs", f"{storage}:{disk}",
+        "--cores", str(cores),
+        "--memory", str(ram),
+        "--swap", str(swap),
+        "--unprivileged", str(unpriv_flag),
+        "--net0", net0_spec,
+        "--onboot", "1",
+    ]
+    if nesting:
+        pct_create_args += ["--features", "nesting=1"]
+
+    ssh_run(PVE_HOST, *pct_create_args)
+
+    # Write spoke firewall file before first start — container comes up already fenced.
+    if isolate:
+        _write_vm_firewall(new_vmid, FW_GROUP)
+
+    ssh_run(PVE_HOST, "pct", "start", str(new_vmid))
+
+    # swappiness is a host-level sysctl (not namespaced); set once on the PVE host,
+    # all CTs inherit. --swap above gives the cgroup swap limit.
+
+    if add_forward:
+        ssh_run(
+            PVE_HOST,
+            "iptables", "-t", "nat", "-A", "PREROUTING",
+            "-p", "tcp", "--dport", str(forward_port),
+            "-j", "DNAT", "--to", f"{ip}:22",
+        )
+        _persist_iptables()
+
+    emit({
+        "vmid": new_vmid,
+        "name": name,
+        "type": "lxc",
+        "ip": ip,
+        "bridge": VM_BRIDGE,
+        "template": template,
+        "cores": cores,
+        "ram_mb": ram,
+        "disk_gb": disk,
+        "swap_mb": swap,
+        "unprivileged": unprivileged,
+        "nesting": nesting,
+        "isolated": isolate,
+        "firewall_group": FW_GROUP if isolate else None,
+        "ssh_forward_port": forward_port if add_forward else None,
+        "ssh_alias_block": f"Host {name}\n  Port {forward_port}" if add_forward else None,
+        "ssh_alias_note": (
+            f"add the ssh_alias_block to ~/.ssh/config, then add `{name}` to the shared "
+            f"per-VM `Host a b c ...` block (HostName = PVE external IP, User, IdentityFile)"
+        ) if add_forward else None,
+        "next_steps": [
+            *( ["edit ~/.ssh/config per ssh_alias_block + ssh_alias_note"] if add_forward else [] ),
+            f"utils pve dns {name}.internal {ip}",
+            f"ssh -o StrictHostKeyChecking=accept-new {name} echo ok   # smoke test (sshd present in ubuntu-24.04-standard)",
+        ],
+    })
+
+
 # ── forward ─────────────────────────────────────────────────────
 @app.command(help="Manage PVE iptables PREROUTING port forwards.")
 def forward(
