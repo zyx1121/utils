@@ -18,6 +18,7 @@ list_commands() {
 # .py: first docstring line (PEP 723 metadata block sits above the """).
 # .sh / .bash: first comment line after the shebang.
 # .applescript: first `-- ...` line.
+# .swift: first `// ...` comment line after the shebang.
 get_desc() {
     local f="$1"
     case "${f##*.}" in
@@ -40,6 +41,9 @@ get_desc() {
             ;;
         applescript|scpt)
             awk '/^--/ { sub(/^-- */, ""); print; exit }' "$f" 2>/dev/null
+            ;;
+        swift)
+            awk 'NR > 1 && /^\/\// { sub(/^\/\/ */, ""); print; exit }' "$f" 2>/dev/null
             ;;
     esac
 }
