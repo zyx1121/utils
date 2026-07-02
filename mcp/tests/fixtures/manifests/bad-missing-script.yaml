@@ -1,0 +1,7 @@
+# Intentionally invalid fixture: valid manifest shape, but 'atom' has no
+# corresponding script under the fixture scripts/ dir.
+atom: does-not-exist
+envelope: false
+tools:
+  - name: does_not_exist
+    description: "d"

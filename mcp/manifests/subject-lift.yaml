@@ -1,0 +1,18 @@
+atom: subject-lift
+envelope: false
+timeout_ms: 30000
+tools:
+  - name: subject_lift
+    description: "macOS Vision subject lifting (background removal). Detects salient foreground instances (people, pets, food, objects — class-agnostic) in an input image and writes a PNG with alpha: subject pixels opaque, everything else transparent."
+    argv_prefix: []
+    params:
+      - name: input
+        type: string
+        required: true
+        description: "Path to the input image (jpg, png, heic, ...)"
+        positional: true
+      - name: output
+        type: string
+        required: true
+        description: "Path to write the output PNG (with alpha channel) to"
+        positional: true
