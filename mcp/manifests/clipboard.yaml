@@ -1,0 +1,18 @@
+atom: clipboard
+envelope: false
+tools:
+  - name: clipboard_read
+    description: "Read the current macOS clipboard contents as text."
+    argv_prefix: ["read"]
+  - name: clipboard_clear
+    description: "Empty the macOS clipboard."
+    argv_prefix: ["clear"]
+  - name: clipboard_write
+    description: "Write text to the macOS clipboard, replacing its current contents."
+    argv_prefix: ["write"]
+    params:
+      - name: text
+        type: string
+        required: true
+        stdin: true
+        description: "Text to copy to the clipboard. Routed to the subprocess's stdin (spec v1.1) — scripts/clipboard.sh's `write` subcommand pipes stdin straight into pbcopy, no CLI arg exists."

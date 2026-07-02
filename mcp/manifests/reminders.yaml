@@ -1,0 +1,83 @@
+atom: reminders
+envelope: true
+timeout_ms: 60000  # underlying osascript subprocess has no internal timeout; this is the only backstop, see NOTES.md
+tools:
+  - name: reminders_show_lists
+    description: "List all Reminders.app lists (Inbox + custom lists). Use to discover valid list_name values before add/list/done/delete."
+    argv_prefix: ["show-lists"]
+    params: []
+
+  - name: reminders_list
+    description: "List reminders in a list (default: the user's default list), optionally including completed ones. Use when checking what's on the user's reminders."
+    argv_prefix: ["list"]
+    params:
+      - name: list_name
+        type: string
+        required: false
+        cli: "--list"
+        description: "Reminder list name. Default: the user's default list."
+      - name: show_done
+        type: boolean
+        required: false
+        cli: "--show-done"
+        description: "Include completed reminders (excluded by default)."
+      - name: limit
+        type: number
+        required: false
+        cli: "--limit"
+        description: "Max reminders to return."
+
+  - name: reminders_add
+    description: "Add a new reminder, optionally with a due date/time and notes. Use when the user asks to be reminded of something."
+    argv_prefix: ["add"]
+    params:
+      - name: name
+        type: string
+        required: true
+        positional: true
+        description: "Reminder text."
+      - name: due
+        type: string
+        required: false
+        cli: "--due"
+        description: "Due time: YYYY-MM-DD, YYYY-MM-DDTHH:MM, 'today', 'tomorrow', or 'next week'."
+      - name: list_name
+        type: string
+        required: false
+        cli: "--list"
+        description: "Target reminder list. Default: the user's default list."
+      - name: notes
+        type: string
+        required: false
+        cli: "--notes"
+        description: "Body / notes text."
+
+  - name: reminders_done
+    description: "Mark the first reminder whose name exactly matches as completed. Use when the user says a reminder is done/finished."
+    argv_prefix: ["done"]
+    params:
+      - name: name
+        type: string
+        required: true
+        positional: true
+        description: "Exact reminder name — first match wins."
+      - name: list_name
+        type: string
+        required: false
+        cli: "--list"
+        description: "Search in this list. Default: the user's default list."
+
+  - name: reminders_delete
+    description: "Delete the first reminder whose name exactly matches. Use when the user wants a reminder removed outright, not just completed."
+    argv_prefix: ["delete"]
+    params:
+      - name: name
+        type: string
+        required: true
+        positional: true
+        description: "Exact reminder name — first match wins."
+      - name: list_name
+        type: string
+        required: false
+        cli: "--list"
+        description: "Search in this list. Default: the user's default list."

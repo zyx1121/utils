@@ -1,0 +1,29 @@
+atom: json
+envelope: true
+timeout_ms: 60000
+tools:
+  - name: json
+    description: "Inspect, pretty-print, minify, validate, or extract a value from a JSON file using a jq-style dot/bracket path. Use when you need to read or query a JSON file's structure without loading it into a full script."
+    argv_prefix: []
+    params:
+      - name: path
+        type: string
+        required: true
+        positional: true
+        description: "Path to the JSON file."
+      - name: pretty
+        type: boolean
+        required: false
+        cli: "--pretty"
+        cli_false: "--minify"
+        description: "Pretty-print (true, default) vs minify (false — appends --minify)."
+      - name: extract
+        type: string
+        required: false
+        cli: "--extract"
+        description: "Extract one value via a jq-style path, e.g. .data.users[0].name."
+      - name: validate
+        type: boolean
+        required: false
+        cli: "--validate"
+        description: "Just check whether the file parses as valid JSON; skip printing/extracting."

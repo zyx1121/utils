@@ -1,0 +1,23 @@
+atom: skill-lint
+envelope: true
+timeout_ms: 60000
+tools:
+  - name: skill_lint
+    description: "Lint Claude Code SKILL.md files for missing/malformed frontmatter, description length, name/directory mismatch, staleness (>90d unmodified), and empty body. Use when auditing skill quality or before promoting a new/edited skill."
+    argv_prefix: []
+    params:
+      - name: path
+        type: string
+        required: false
+        positional: true
+        description: "Directory to scan for */SKILL.md (top-level only, unless recursive=true). Default: ~/.kilo/skills."
+      - name: recursive
+        type: boolean
+        required: false
+        cli: "--recursive"
+        description: "Recurse into subdirectories instead of only scanning top-level */SKILL.md (off by default to skip sync artifacts)."
+      - name: verbose
+        type: boolean
+        required: false
+        cli: "--verbose"
+        description: "Include clean (issue-free) skills in the output, not just ones with issues."

@@ -1,0 +1,28 @@
+atom: skill-usage
+envelope: true
+timeout_ms: 60000
+tools:
+  - name: skill_usage
+    description: "Roll up per-skill adoption: all-time invocation count (~/.claude.json skillUsage) joined with the windowed events log for recency, launch-ok%, per-cwd usage, co-occurrence, and dormant/never-used detection. Use when reviewing which skills are actually getting used or finding archive candidates."
+    argv_prefix: []
+    params:
+      - name: days
+        type: number
+        required: false
+        cli: "--days"
+        description: "Window in days for time-series metrics (invocations, launch-ok%, co-occurrence). Default: 30."
+      - name: personal_only
+        type: boolean
+        required: false
+        cli: "--personal"
+        description: "Only include personal skills (~/.kilo/skills); hide external plugin skills."
+      - name: events_dir
+        type: string
+        required: false
+        cli: "--events-dir"
+        description: "Directory of events.py JSONL logs. Default: ~/.kilo/data/events."
+      - name: skills_dir
+        type: string
+        required: false
+        cli: "--skills-dir"
+        description: "Personal skills directory that defines the canonical skill-name set. Default: ~/.kilo/skills."

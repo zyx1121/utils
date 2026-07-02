@@ -96,16 +96,34 @@ def new(
 
     if not no_icon:
         try:
-            subprocess.run(["./scripts/generate-icon.py"], cwd=target, check=True)
-        except (subprocess.CalledProcessError, FileNotFoundError) as e:
+            subprocess.run(["./scripts/generate-icon.py"], cwd=target, check=True,
+                            capture_output=True, text=True)
+        except subprocess.CalledProcessError as e:
+            detail = e.stderr.strip() if e.stderr else "(no stderr captured)"
+            print(f"[yellow]! icon 產生失敗（之後跑 `make icon`）：{detail}[/yellow]")
+        except FileNotFoundError as e:
             print(f"[yellow]! icon 產生失敗（之後跑 `make icon`）：{e}[/yellow]")
 
     if not no_git:
-        subprocess.run(["git", "init", "-q"], cwd=target, check=True)
-        subprocess.run(["git", "add", "-A"], cwd=target, check=True)
-        subprocess.run(["git", "commit", "-q", "-m",
-                        f"init: scaffold {name} from macos-cli-dev template"],
-                       cwd=target, check=True)
+        def _git(*args: str) -> None:
+            # capture_output=True is load-bearing beyond "clean errors": without it
+            # this subprocess inherits our stdout/stderr file descriptors. Run under
+            # the MCP executor, those descriptors are the same pipes it reads to
+            # EOF — an uncaptured child surviving past a `kill()` (or in this repo's
+            # case, just running normally but still holding the fd open a beat
+            # longer than expected) can leave the read side hanging. Every
+            # subprocess.run() in a manifested atom must capture its own output.
+            try:
+                subprocess.run(["git", *args], cwd=target, check=True,
+                                capture_output=True, text=True)
+            except subprocess.CalledProcessError as e:
+                detail = e.stderr.strip() if e.stderr else "(no stderr captured)"
+                print(f"[red]✗ git {' '.join(args)} failed: {detail}[/red]")
+                raise typer.Exit(1)
+
+        _git("init", "-q")
+        _git("add", "-A")
+        _git("commit", "-q", "-m", f"init: scaffold {name} from macos-cli-dev template")
         print("[green]✓[/green] git init + first commit")
 
     print(f"\n下一步：\n  cd {target}\n  make run        # build + sign + 開\n"
