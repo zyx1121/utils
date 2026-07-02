@@ -73,6 +73,85 @@ describe("validateManifest", () => {
     expect(() => validateManifest(raw, "f.yaml")).toThrow(/enum/);
   });
 
+  test("accepts array type with no enum list required", () => {
+    const raw = {
+      atom: "x",
+      envelope: true,
+      tools: [{ name: "x", description: "d", params: [{ name: "p", type: "array", positional: true }] }],
+    };
+    expect(() => validateManifest(raw, "f.yaml")).not.toThrow();
+  });
+
+  test("accepts a stdin: true param with neither positional nor cli", () => {
+    const raw = {
+      atom: "clipboard",
+      envelope: false,
+      tools: [{ name: "clipboard_write", description: "d", argv_prefix: ["write"], params: [{ name: "text", type: "string", stdin: true }] }],
+    };
+    expect(() => validateManifest(raw, "f.yaml")).not.toThrow();
+  });
+
+  test("rejects a param with both stdin: true and positional/cli", () => {
+    const rawWithPositional = {
+      atom: "x",
+      envelope: true,
+      tools: [{ name: "x", description: "d", params: [{ name: "p", type: "string", stdin: true, positional: true }] }],
+    };
+    expect(() => validateManifest(rawWithPositional, "f.yaml")).toThrow();
+
+    const rawWithCli = {
+      atom: "x",
+      envelope: true,
+      tools: [{ name: "x", description: "d", params: [{ name: "p", type: "string", stdin: true, cli: "--p" }] }],
+    };
+    expect(() => validateManifest(rawWithCli, "f.yaml")).toThrow();
+  });
+
+  test("rejects more than one stdin: true param on the same tool", () => {
+    const raw = {
+      atom: "x",
+      envelope: true,
+      tools: [
+        {
+          name: "x",
+          description: "d",
+          params: [
+            { name: "a", type: "string", stdin: true },
+            { name: "b", type: "string", stdin: true },
+          ],
+        },
+      ],
+    };
+    expect(() => validateManifest(raw, "f.yaml")).toThrow(/stdin/);
+  });
+
+  test("accepts cli_false on a boolean param with cli", () => {
+    const raw = {
+      atom: "x",
+      envelope: true,
+      tools: [{ name: "x", description: "d", params: [{ name: "p", type: "boolean", cli: "--p", cli_false: "--no-p" }] }],
+    };
+    expect(() => validateManifest(raw, "f.yaml")).not.toThrow();
+  });
+
+  test("rejects cli_false on a non-boolean param", () => {
+    const raw = {
+      atom: "x",
+      envelope: true,
+      tools: [{ name: "x", description: "d", params: [{ name: "p", type: "string", cli: "--p", cli_false: "--no-p" }] }],
+    };
+    expect(() => validateManifest(raw, "f.yaml")).toThrow(/cli_false/);
+  });
+
+  test("rejects cli_false on a positional boolean param", () => {
+    const raw = {
+      atom: "x",
+      envelope: true,
+      tools: [{ name: "x", description: "d", params: [{ name: "p", type: "boolean", positional: true, cli_false: "--no-p" }] }],
+    };
+    expect(() => validateManifest(raw, "f.yaml")).toThrow(/cli_false/);
+  });
+
   test("accepts a well-formed manifest and returns it structurally intact", () => {
     const raw = {
       atom: "uuid",

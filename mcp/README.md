@@ -23,7 +23,12 @@ args into `[scriptPath, ...argv_prefix, ...params]` → `Bun.spawn` runs it with
 real stdin/stdout — those are the JSON-RPC channel) → `mapRunOutput()` turns
 stdout/stderr/exit code into `{structuredContent, isError}`.
 
-## Manifest spec (frozen — see ADR-0001, don't extend)
+## Manifest spec v1.1
+
+v1 base is frozen (see ADR-0001). v1.1 adds three lead-approved extensions —
+`stdin`, `array`, `cli_false` — that closed real gaps found while writing the
+full 16-manifest set (see `manifests/NOTES.md`-derived history in git log).
+Nothing else gets bolted on without another explicit sign-off.
 
 ```yaml
 atom: uuid              # scripts/ base name; resolved like bin/utils:
@@ -37,28 +42,69 @@ tools:
     argv_prefix: []         # fixed leading tokens (e.g. a subcommand)
     params:                  # order matters — argv is built in this order
       - name: count
-        type: number          # string | number | boolean | enum
+        type: number          # string | number | boolean | enum | array
         required: false        # omitted = required (only explicit `false` is optional)
         description: "..."
         cli: "--count"          # flag form; booleans append only the flag when true
-      # positional params use `positional: true` instead of `cli` — exactly
-      # one of the two must be set, never both, never neither.
+        cli_false: "--no-count" # v1.1, boolean+cli only: append this when the value is false
+                                 # instead of omitting — needed for --on/--off flag pairs whose
+                                 # default is true (e.g. typer's --unprivileged/--privileged)
+      # positional params use `positional: true` instead of `cli`.
+      # stdin params use `stdin: true` instead of `cli`/`positional` (v1.1) —
+      # the value is fed to the subprocess's stdin (a synthetic in-memory
+      # Blob, never the server's real process.stdin/JSON-RPC stream) instead
+      # of argv. At most one `stdin: true` param per tool.
+      # -> exactly one of `positional: true` / `cli` / `stdin: true` per param.
       # enum type requires `enum: [a, b, ...]`.
+      # array type (v1.1): items are always strings. positional appends every
+      # item in order; flagged repeats `cli` once per item. No min-length
+      # enforcement — the underlying atom's own validation is the backstop.
 ```
 
 argv is always built as an array and passed to `spawn` directly — never
 shell-joined.
 
-## Pilot manifests
+## Manifests
+
+19 manifest files, 66 tools total. `uuid.yaml` / `clipboard.yaml` /
+`subject-lift.yaml` are the original M1 pilots; the other 16 map every
+actively-used atom (see ADR-0001's usage-driven scoping rule). Notable spots:
 
 - `uuid.yaml` — python envelope atom, `--count` / `--version`.
-- `clipboard.yaml` — bash non-envelope atom, `read` / `clear` subcommands via
-  `argv_prefix`. **`write` is intentionally not exposed** — see the comment
-  in the manifest file for why (stdin-only atom input has no manifest-level
-  representation under the frozen spec).
+- `clipboard.yaml` — bash non-envelope atom, `read` / `clear` / `write`
+  subcommands via `argv_prefix`. `write`'s `text` param uses `stdin: true`
+  (v1.1) — `clipboard.sh write` pipes stdin straight into `pbcopy`, no CLI
+  arg exists.
 - `subject-lift.yaml` — Swift non-envelope atom, two positional args
   (`input`, `output`), longer `timeout_ms` since first-run Vision model load
   takes a few seconds on top of Swift's interpreted-mode compile step.
+- `pve.yaml` — 10 of `pve.py`'s 11 subcommands. `ssh` is excluded: it runs
+  `subprocess.run([...])` with fully inherited stdio, which is exactly the
+  stdio-hijack ADR-0001 forbids — not a manifest gap, genuinely unsuited to
+  MCP as this server is built. Every confirm-gated command (`stop`,
+  `destroy`, `clone`, `create-ct`, `dns remove`, `caddy remove`/shrinking
+  `add`) already has a `--yes/-y` bypass in the underlying CLI, so all of
+  them stay in the manifest with `yes` exposed as a boolean param and the
+  destructive consequence stated in the description — see
+  `tests/confirm-gate.test.ts` for the evidence that an unconfirmed call
+  fails fast instead of hanging. `create_ct.unprivileged` uses `cli_false`
+  (v1.1) since the underlying flag pair defaults to `true`.
+- `json.yaml` — `pretty` uses `cli_false: "--minify"` (v1.1) for the same
+  default-true flag-pair reason.
+- `e3p.yaml` — 10 of `e3p.py`'s 11 subcommands. **`e3p_login` is excluded**
+  (lead decision, not a manifest gap): its `--password` would flow as a
+  plaintext MCP `tool_input` field, which M2's `observe.py` will start
+  logging structured for every `mcp__utils__*` call with no redaction path
+  yet. Login is low-frequency; use `utils e3p login` directly until
+  redaction exists. `e3p_call`'s `params` uses `type: array` (v1.1) for the
+  variadic `key=value` list.
+- `mail.yaml` — `mail_compose`'s `to`/`cc`/`bcc` use `type: array` (v1.1) for
+  the underlying repeatable `--to`/`--cc`/`--bcc` flags.
+- `pdf.yaml` — `pdf_merge`'s `inputs` uses `type: array` (v1.1) for the
+  variadic 2+ positional path list.
+- `ubereats.yaml` — non-envelope, `timeout_ms: 300000` (paginated fetch +
+  per-order sleep can run minutes on a large history). `dump_cookie` writes a
+  live session credential to disk — treat the output path as sensitive.
 
 ## Running the server
 
@@ -92,9 +138,10 @@ bunx tsc --noEmit -p tsconfig.json   # type check
 
 Coverage:
 
-- `tests/schema.test.ts` — param type → zod schema correctness, required/optional handling.
-- `tests/exec.test.ts` — argv construction (positional / flagged / boolean / enum / argv_prefix ordering) and envelope→result mapping (success / failure / non-JSON stdout / timeout), all against fixture data — no real subprocess spawned.
-- `tests/manifest.test.ts` — valid manifest loads correctly; a manifest missing required fields or pointing at a nonexistent atom script is skipped (named `ManifestError`, logged to stderr) without taking the rest of the load down; `resolveAtomScript` cross-checked against the real `../scripts/` dir for all three pilot atoms.
+- `tests/schema.test.ts` — param type → zod schema correctness (including v1.1 `array`), required/optional handling.
+- `tests/exec.test.ts` — argv construction (positional / flagged / boolean / enum / argv_prefix ordering, plus v1.1 `array` and `cli_false` behavior and `stdin: true` never reaching argv), `resolveStdinInput`, and envelope→result mapping (success / failure / non-JSON stdout / timeout), all against fixture data — no real subprocess spawned except where noted below.
+- `tests/manifest.test.ts` — valid manifest loads correctly; a manifest missing required fields or pointing at a nonexistent atom script is skipped (named `ManifestError`, logged to stderr) without taking the rest of the load down; v1.1 field validation (`stdin`/`array`/`cli_false` legality rules); `resolveAtomScript` cross-checked against the real `../scripts/` dir for all three pilot atoms.
+- `tests/confirm-gate.test.ts` — runs a minimal `typer.confirm()` fixture atom through the real `execAtom()` and asserts it aborts fast (non-zero exit, no `timed_out`) under the executor's `stdio[0] = "ignore"` — the ADR-0001 unverified point, now verified.
 
 ## Adding a new manifest
 

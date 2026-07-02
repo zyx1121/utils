@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { buildArgv, mapRunOutput } from "../lib/exec.ts";
+import { buildArgv, mapRunOutput, resolveStdinInput } from "../lib/exec.ts";
 import type { ManifestTool } from "../lib/manifest.ts";
 
 describe("buildArgv", () => {
@@ -72,6 +72,108 @@ describe("buildArgv", () => {
     };
     const argv = buildArgv("/s", tool, { a: "A", b: "B" });
     expect(argv).toEqual(["/s", "B", "A"]);
+  });
+});
+
+describe("buildArgv — spec v1.1 extensions", () => {
+  test("array positional appends every item, in order, no flags", () => {
+    const tool: ManifestTool = {
+      name: "pdf_merge",
+      description: "d",
+      argv_prefix: ["merge"],
+      params: [{ name: "inputs", type: "array", positional: true }],
+    };
+    const argv = buildArgv("/scripts/pdf.py", tool, { inputs: ["a.pdf", "b.pdf", "c.pdf"] });
+    expect(argv).toEqual(["/scripts/pdf.py", "merge", "a.pdf", "b.pdf", "c.pdf"]);
+  });
+
+  test("array flagged param repeats the cli flag once per item", () => {
+    const tool: ManifestTool = {
+      name: "mail_compose",
+      description: "d",
+      argv_prefix: ["compose"],
+      params: [{ name: "to", type: "array", cli: "--to" }],
+    };
+    const argv = buildArgv("/scripts/mail.py", tool, { to: ["a@x.com", "b@x.com"] });
+    expect(argv).toEqual(["/scripts/mail.py", "compose", "--to", "a@x.com", "--to", "b@x.com"]);
+  });
+
+  test("array param omitted entirely when undefined (positional and flagged)", () => {
+    const positionalTool: ManifestTool = {
+      name: "t",
+      description: "d",
+      params: [{ name: "inputs", type: "array", required: false, positional: true }],
+    };
+    const flaggedTool: ManifestTool = {
+      name: "t",
+      description: "d",
+      params: [{ name: "cc", type: "array", required: false, cli: "--cc" }],
+    };
+    expect(buildArgv("/s", positionalTool, {})).toEqual(["/s"]);
+    expect(buildArgv("/s", flaggedTool, {})).toEqual(["/s"]);
+  });
+
+  test("array flagged param with an empty array appends nothing", () => {
+    const tool: ManifestTool = {
+      name: "t",
+      description: "d",
+      params: [{ name: "cc", type: "array", cli: "--cc" }],
+    };
+    expect(buildArgv("/s", tool, { cc: [] })).toEqual(["/s"]);
+  });
+
+  test("boolean true appends cli, false appends cli_false when declared", () => {
+    const tool: ManifestTool = {
+      name: "pve_create_ct",
+      description: "d",
+      params: [{ name: "unprivileged", type: "boolean", cli: "--unprivileged", cli_false: "--privileged" }],
+    };
+    expect(buildArgv("/s", tool, { unprivileged: true })).toEqual(["/s", "--unprivileged"]);
+    expect(buildArgv("/s", tool, { unprivileged: false })).toEqual(["/s", "--privileged"]);
+  });
+
+  test("boolean false with no cli_false falls back to the v1 'omit' behavior", () => {
+    const tool: ManifestTool = {
+      name: "t",
+      description: "d",
+      params: [{ name: "verbose", type: "boolean", cli: "--verbose" }],
+    };
+    expect(buildArgv("/s", tool, { verbose: false })).toEqual(["/s"]);
+  });
+
+  test("stdin: true param never reaches argv", () => {
+    const tool: ManifestTool = {
+      name: "clipboard_write",
+      description: "d",
+      argv_prefix: ["write"],
+      params: [{ name: "text", type: "string", stdin: true }],
+    };
+    expect(buildArgv("/scripts/clipboard.sh", tool, { text: "hello clipboard" })).toEqual([
+      "/scripts/clipboard.sh",
+      "write",
+    ]);
+  });
+});
+
+describe("resolveStdinInput", () => {
+  test("returns undefined when the tool has no stdin param", () => {
+    const tool: ManifestTool = { name: "t", description: "d", params: [{ name: "x", type: "string", positional: true }] };
+    expect(resolveStdinInput(tool, { x: "hi" })).toBeUndefined();
+  });
+
+  test("returns undefined when the stdin param's value is undefined", () => {
+    const tool: ManifestTool = { name: "t", description: "d", params: [{ name: "text", type: "string", stdin: true, required: false }] };
+    expect(resolveStdinInput(tool, {})).toBeUndefined();
+  });
+
+  test("returns the string value directly for a string stdin param", () => {
+    const tool: ManifestTool = { name: "t", description: "d", params: [{ name: "text", type: "string", stdin: true }] };
+    expect(resolveStdinInput(tool, { text: "hello clipboard" })).toBe("hello clipboard");
+  });
+
+  test("joins an array stdin param's values with newlines", () => {
+    const tool: ManifestTool = { name: "t", description: "d", params: [{ name: "lines", type: "array", stdin: true }] };
+    expect(resolveStdinInput(tool, { lines: ["a", "b", "c"] })).toBe("a\nb\nc");
   });
 });
 

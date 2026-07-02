@@ -1,0 +1,83 @@
+atom: mail
+envelope: true
+timeout_ms: 130000  # run_as() sets an explicit 120s subprocess timeout — MCP ceiling must exceed it
+tools:
+  - name: mail_accounts
+    description: "List configured Mail.app accounts (name, username, addresses). Use to discover which account values are valid for mail_compose."
+    argv_prefix: ["accounts"]
+    params: []
+
+  - name: mail_inbox
+    description: "List recent inbox messages across all Mail.app accounts, newest first. Use to check what's arrived, optionally filtering to unread only."
+    argv_prefix: ["inbox"]
+    params:
+      - name: unread
+        type: boolean
+        required: false
+        cli: "--unread"
+        description: "Only show unread messages."
+      - name: limit
+        type: number
+        required: false
+        cli: "--limit"
+        description: "Max rows to return. Default: 20."
+
+  - name: mail_search
+    description: "Substring-search the inbox across subject + sender, app-wide. Use when looking for a specific email by keyword or sender."
+    argv_prefix: ["search"]
+    params:
+      - name: query
+        type: string
+        required: true
+        positional: true
+        description: "Substring to match in subject or sender."
+      - name: limit
+        type: number
+        required: false
+        cli: "--limit"
+        description: "Max rows to return. Default: 20."
+
+  - name: mail_read
+    description: "Print the first inbox message whose subject matches (exact match preferred, falls back to substring), including full body. Use to read a specific email found via mail_inbox or mail_search."
+    argv_prefix: ["read"]
+    params:
+      - name: subject
+        type: string
+        required: true
+        positional: true
+        description: "Subject to match — tries exact match first, then contains."
+
+  - name: mail_compose
+    description: "Open a visible Mail.app draft compose window with recipients/subject/body filled in — the user reviews and clicks Send manually, there is no auto-send. Use when the agent needs to prepare an email for the user rather than send one autonomously."
+    argv_prefix: ["compose"]
+    params:
+      - name: to
+        type: array
+        required: true
+        cli: "--to"
+        description: "Recipient address(es) — repeats --to once per item, one or more required."
+      - name: subject
+        type: string
+        required: true
+        cli: "--subject"
+        description: "Subject line."
+      - name: body
+        type: string
+        required: false
+        cli: "--body"
+        description: "Body text. Use \\n for line breaks. Default: empty."
+      - name: cc
+        type: array
+        required: false
+        cli: "--cc"
+        description: "CC recipient(s) — repeats --cc once per item."
+      - name: bcc
+        type: array
+        required: false
+        cli: "--bcc"
+        description: "BCC recipient(s) — repeats --bcc once per item."
+      - name: account
+        type: string
+        required: false
+        cli: "--account"
+        description: "Send-from account name. Default: Mail.app's default account."

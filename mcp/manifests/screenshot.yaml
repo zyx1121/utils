@@ -1,0 +1,33 @@
+atom: screenshot
+envelope: false
+timeout_ms: 60000
+tools:
+  - name: screenshot
+    description: "Capture the macOS screen, an interactively-selected window/region, or a programmatic pixel region, via screencapture(1); prints the saved PNG path (or confirms clipboard capture). Modes are mutually exclusive — pick one flag, or none for full-screen. Use when the agent needs to see the current screen or hand a screenshot to the user."
+    argv_prefix: []
+    params:
+      - name: out
+        type: string
+        required: false
+        positional: true
+        description: "Output PNG path. Default: /tmp/screenshot.png. Ignored in clipboard mode."
+      - name: area
+        type: boolean
+        required: false
+        cli: "--area"
+        description: "Interactive mode: user drags to select a region. Blocks waiting for that UI interaction — do not use unattended."
+      - name: window
+        type: boolean
+        required: false
+        cli: "--window"
+        description: "Interactive mode: user clicks a window to capture. Blocks waiting for that UI interaction — do not use unattended."
+      - name: region
+        type: string
+        required: false
+        cli: "--region"
+        description: "Programmatic region capture, no UI interaction: 'x,y,w,h'."
+      - name: clipboard
+        type: boolean
+        required: false
+        cli: "--clipboard"
+        description: "Capture to the clipboard instead of a file; no path is produced."

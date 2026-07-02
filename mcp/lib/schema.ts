@@ -17,6 +17,10 @@ export function paramToZodType(param: ManifestParam): z.ZodTypeAny {
     case "boolean":
       schema = z.boolean();
       break;
+    case "array":
+      // Spec v1.1: array items are always strings — no nested item typing.
+      schema = z.array(z.string());
+      break;
     case "enum": {
       const values = param.enum;
       if (!values || values.length === 0) {

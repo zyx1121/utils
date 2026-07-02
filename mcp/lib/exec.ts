@@ -21,7 +21,11 @@ export interface ExecResult {
 /**
  * argv = [scriptPath, ...argv_prefix, <params in declared order>].
  * Positional params append their value directly; flagged params append
- * `cli` then the value (booleans append only the flag, and only when true).
+ * `cli` then the value (booleans append only the flag, and only when true —
+ * or `cli_false` when explicitly false and declared). `array` params (v1.1)
+ * append every item in order for positional, or repeat `cli` once per item
+ * for flagged. A `stdin: true` param is never touched here — it's routed to
+ * the subprocess's stdin by `execAtom`, not argv.
  * Always returned as an array for `spawn` — never joined into a shell string.
  */
 export function buildArgv(scriptPath: string, tool: ManifestTool, args: Record<string, unknown>): string[] {
@@ -36,20 +40,54 @@ export function buildArgv(scriptPath: string, tool: ManifestTool, args: Record<s
 }
 
 function appendParam(argv: string[], param: ManifestParam, value: unknown): void {
+  if (param.stdin) return;
+
   if (param.positional) {
     if (value === undefined) return;
-    argv.push(String(value));
+    if (param.type === "array") {
+      for (const item of value as unknown[]) argv.push(String(item));
+    } else {
+      argv.push(String(value));
+    }
     return;
   }
 
   // flagged
   if (param.type === "boolean") {
-    if (value === true) argv.push(param.cli as string);
+    if (value === true) {
+      argv.push(param.cli as string);
+    } else if (value === false && param.cli_false) {
+      argv.push(param.cli_false);
+    }
     return;
   }
+
+  if (param.type === "array") {
+    if (value === undefined) return;
+    for (const item of value as unknown[]) {
+      argv.push(param.cli as string);
+      argv.push(String(item));
+    }
+    return;
+  }
+
   if (value === undefined) return;
   argv.push(param.cli as string);
   argv.push(String(value));
+}
+
+/**
+ * The single `stdin: true` param's value (if the tool declares one and the
+ * caller supplied it), flattened to a string for feeding the subprocess.
+ * Arrays join with newlines; every other type stringifies directly.
+ */
+export function resolveStdinInput(tool: ManifestTool, args: Record<string, unknown>): string | undefined {
+  const stdinParam = (tool.params ?? []).find((p) => p.stdin);
+  if (!stdinParam) return undefined;
+  const value = args[stdinParam.name];
+  if (value === undefined) return undefined;
+  if (Array.isArray(value)) return value.map(String).join("\n");
+  return String(value);
 }
 
 interface EnvelopeSuccess {
@@ -140,8 +178,16 @@ export async function execAtom(opts: ExecOptions): Promise<ExecResult> {
   const { tool, args, scriptPath, envelope, timeoutMs, env } = opts;
   const argv = buildArgv(scriptPath, tool, args);
 
+  // Default is "ignore" (ADR-0001 hard rule: subprocess never inherits the
+  // server's real stdio, which is the JSON-RPC channel). A `stdin: true`
+  // param (v1.1) is the one carve-out — it feeds a synthetic in-memory Blob,
+  // never the server's actual process.stdin, so the JSON-RPC stream is still
+  // never touched.
+  const stdinInput = resolveStdinInput(tool, args);
+  const stdin0: "ignore" | Blob = stdinInput !== undefined ? new Blob([stdinInput]) : "ignore";
+
   const proc = Bun.spawn(argv, {
-    stdio: ["ignore", "pipe", "pipe"],
+    stdio: [stdin0, "pipe", "pipe"],
     env: env ?? process.env,
   });
 

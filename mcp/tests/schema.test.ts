@@ -36,6 +36,14 @@ describe("paramToZodType", () => {
     expect(() => paramToZodType(required({ type: "enum" }))).toThrow();
   });
 
+  test("array type (v1.1) parses string arrays, rejects non-arrays and non-string items", () => {
+    const schema = paramToZodType(required({ type: "array" }));
+    expect(schema.safeParse(["a", "b"]).success).toBe(true);
+    expect(schema.safeParse([]).success).toBe(true);
+    expect(schema.safeParse("a").success).toBe(false);
+    expect(schema.safeParse([1, 2]).success).toBe(false);
+  });
+
   test("required (default / explicit true) rejects undefined", () => {
     const implicitlyRequired = paramToZodType(required({ type: "string" }));
     const explicitlyRequired = paramToZodType(required({ type: "string", required: true }));

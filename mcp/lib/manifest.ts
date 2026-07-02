@@ -1,12 +1,12 @@
 // Manifest loading — YAML files under manifests/ describe how an atom in
-// ../scripts/ maps onto one or more MCP tools. Spec is frozen (see
-// decisions/ADR-0001-mcp-tool-provider.md) — this file only *validates* it,
-// it does not extend it.
+// ../scripts/ maps onto one or more MCP tools. Spec v1.1 (frozen v1 base +
+// three lead-approved extensions — stdin, array, cli_false — see
+// decisions/ADR-0001-mcp-tool-provider.md + mcp/README.md's spec section).
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { parse as parseYaml } from "yaml";
 
-export type ParamType = "string" | "number" | "boolean" | "enum";
+export type ParamType = "string" | "number" | "boolean" | "enum" | "array";
 
 export interface ManifestParam {
   name: string;
@@ -14,7 +14,11 @@ export interface ManifestParam {
   required?: boolean;
   description?: string;
   cli?: string;
+  /** boolean-only: flag to append when the value is `false` (default omit). */
+  cli_false?: string;
   positional?: boolean;
+  /** value routed to the subprocess's stdin instead of argv. At most one per tool. */
+  stdin?: boolean;
   enum?: string[];
 }
 
@@ -57,7 +61,7 @@ export class ManifestError extends Error {
 }
 
 const DEFAULT_TIMEOUT_MS = 60000;
-const VALID_TYPES: ParamType[] = ["string", "number", "boolean", "enum"];
+const VALID_TYPES: ParamType[] = ["string", "number", "boolean", "enum", "array"];
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
@@ -67,7 +71,7 @@ function validateParam(raw: unknown, ctx: string): ManifestParam {
   if (!isPlainObject(raw)) {
     throw new Error(`${ctx}: param must be a mapping`);
   }
-  const { name, type, required, description, cli, positional, enum: enumValues } = raw;
+  const { name, type, required, description, cli, cli_false, positional, stdin, enum: enumValues } = raw;
 
   if (typeof name !== "string" || name.length === 0) {
     throw new Error(`${ctx}: param 'name' must be a non-empty string`);
@@ -86,15 +90,27 @@ function validateParam(raw: unknown, ctx: string): ManifestParam {
   if (cli !== undefined && typeof cli !== "string") {
     throw new Error(`${pctx}: 'cli' must be a string`);
   }
+  if (cli_false !== undefined && typeof cli_false !== "string") {
+    throw new Error(`${pctx}: 'cli_false' must be a string`);
+  }
   if (positional !== undefined && typeof positional !== "boolean") {
     throw new Error(`${pctx}: 'positional' must be a boolean`);
+  }
+  if (stdin !== undefined && typeof stdin !== "boolean") {
+    throw new Error(`${pctx}: 'stdin' must be a boolean`);
   }
 
   const isPositional = positional === true;
   const hasCli = typeof cli === "string" && cli.length > 0;
-  if (isPositional === hasCli) {
-    // both set or neither set — ambiguous either way
-    throw new Error(`${pctx}: exactly one of 'positional: true' or 'cli' must be set`);
+  const isStdin = stdin === true;
+  const deliveryModes = [isPositional, hasCli, isStdin].filter(Boolean).length;
+  if (deliveryModes !== 1) {
+    throw new Error(`${pctx}: exactly one of 'positional: true', 'cli', or 'stdin: true' must be set`);
+  }
+
+  const hasCliFalse = typeof cli_false === "string" && cli_false.length > 0;
+  if (hasCliFalse && (type !== "boolean" || !hasCli)) {
+    throw new Error(`${pctx}: 'cli_false' is only valid on a boolean param that also has 'cli' set`);
   }
 
   if (type === "enum") {
@@ -111,7 +127,9 @@ function validateParam(raw: unknown, ctx: string): ManifestParam {
     required,
     description,
     cli: hasCli ? (cli as string) : undefined,
+    cli_false: hasCliFalse ? (cli_false as string) : undefined,
     positional: isPositional || undefined,
+    stdin: isStdin || undefined,
     enum: type === "enum" ? (enumValues as string[]) : undefined,
   };
 }
@@ -156,6 +174,11 @@ function validateTool(raw: unknown, ctx: string, seenNames: Set<string>): Manife
       paramNames.add(validated.name);
       return validated;
     });
+
+    const stdinCount = toolParams.filter((p) => p.stdin).length;
+    if (stdinCount > 1) {
+      throw new Error(`${tctx}: at most one param may set 'stdin: true' (found ${stdinCount})`);
+    }
   }
 
   seenNames.add(name);

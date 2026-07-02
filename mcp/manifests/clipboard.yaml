@@ -7,11 +7,12 @@ tools:
   - name: clipboard_clear
     description: "Empty the macOS clipboard."
     argv_prefix: ["clear"]
-# clipboard_write intentionally omitted: scripts/clipboard.sh's `write`
-# subcommand reads its content exclusively from stdin (`pbcopy` with no CLI
-# arg), but the frozen manifest spec only maps params onto argv (positional
-# or --flag) and the executor fixes subprocess stdio to
-# ["ignore", "pipe", "pipe"]. There is no manifest-expressible way to route a
-# tool param's value onto stdin, so `write` can't be wired up without either
-# extending the manifest spec (out of scope here) or changing the atom to
-# accept a CLI argument. See worker report for the flagged decision.
+  - name: clipboard_write
+    description: "Write text to the macOS clipboard, replacing its current contents."
+    argv_prefix: ["write"]
+    params:
+      - name: text
+        type: string
+        required: true
+        stdin: true
+        description: "Text to copy to the clipboard. Routed to the subprocess's stdin (spec v1.1) — scripts/clipboard.sh's `write` subcommand pipes stdin straight into pbcopy, no CLI arg exists."
