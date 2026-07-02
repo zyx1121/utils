@@ -29,6 +29,8 @@ export interface ExecResult {
  * Always returned as an array for `spawn` — never joined into a shell string.
  */
 export function buildArgv(scriptPath: string, tool: ManifestTool, args: Record<string, unknown>): string[] {
+  assertNoPositionalGap(tool, args);
+
   const argv: string[] = [scriptPath, ...(tool.argv_prefix ?? [])];
 
   for (const param of tool.params ?? []) {
@@ -37,6 +39,35 @@ export function buildArgv(scriptPath: string, tool: ManifestTool, args: Record<s
   }
 
   return argv;
+}
+
+/**
+ * Positional params are consumed by argv position, not by name — the
+ * underlying CLI has no way to know a later positional was "meant" to skip
+ * an earlier one. If an earlier positional is missing while a later one has
+ * a value (e.g. `pve_dns` giving `ip` without `host`, or `pve_caddy` giving
+ * `upstream` without `domain`), silently building argv would shift every
+ * later positional one slot to the left and corrupt the call without any
+ * error. Reject by name instead of guessing.
+ */
+function assertNoPositionalGap(tool: ManifestTool, args: Record<string, unknown>): void {
+  const positionals = (tool.params ?? []).filter((p) => p.positional);
+  let gapAt: string | undefined;
+
+  for (const param of positionals) {
+    const present = args[param.name] !== undefined;
+    if (!present) {
+      if (gapAt === undefined) gapAt = param.name;
+      continue;
+    }
+    if (gapAt !== undefined) {
+      throw new Error(
+        `tool '${tool.name}': positional param '${param.name}' has a value but earlier positional param ` +
+          `'${gapAt}' does not — passing it would shift argv positions and corrupt the call. ` +
+          `Provide '${gapAt}' too, or omit '${param.name}'.`,
+      );
+    }
+  }
 }
 
 function appendParam(argv: string[], param: ManifestParam, value: unknown): void {
@@ -174,9 +205,102 @@ export function mapRunOutput(envelope: boolean, run: RunOutput): ExecResult {
   };
 }
 
+// After a timeout kill, how long we wait for stdio to actually close before
+// giving up on it. Not tunable per-tool — this is an executor-wide backstop,
+// not part of the manifest spec.
+//
+// Why this exists: `proc.kill()` only signals the *direct* child. If that
+// child spawned a grandchild without capturing its output (a bug, but one
+// the executor cannot assume atoms are free of — see scripts/mac-app.py's
+// pre-fix subprocess.run() calls and tests/fixtures/scripts/
+// uncaptured-grandchild.py), the grandchild inherits the same pipe write
+// end. The read end then never sees EOF — `.text()` on the stream waits for
+// EOF, not for the direct child's exit — so an uncaptured orphan can hold
+// the MCP response open indefinitely even though the "parent" atom is dead.
+// The ADR's timeout guarantee has to hold from the executor's side alone; it
+// cannot depend on every atom's subprocess hygiene being correct.
+export const EXEC_GRACE_MS = 2000;
+
+interface DrainResult {
+  text: string;
+  drained: boolean;
+}
+
+/** Read a stream to EOF, but give up at `deadlineAt` (ms since epoch) and
+ * return whatever was collected so far instead of waiting forever. */
+async function readStreamUntil(stream: ReadableStream<Uint8Array> | null, deadlineAt: number): Promise<DrainResult> {
+  if (!stream) return { text: "", drained: true };
+
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let text = "";
+  let drained = false;
+
+  const readLoop = (async () => {
+    try {
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) {
+          text += decoder.decode();
+          drained = true;
+          return;
+        }
+        text += decoder.decode(value, { stream: true });
+      }
+    } catch {
+      // Reader was cancelled below (deadline hit) or the stream errored —
+      // either way we already keep whatever text was collected up to here.
+    }
+  })();
+
+  const remainingMs = Math.max(0, deadlineAt - Date.now());
+  const deadline = new Promise<void>((resolve) => setTimeout(resolve, remainingMs));
+  await Promise.race([readLoop, deadline]);
+
+  if (!drained) {
+    // Give up — do not await; the underlying fd may never close if an
+    // orphaned grandchild still holds it open, and we must not block on it.
+    reader.cancel().catch(() => {});
+  }
+
+  return { text, drained };
+}
+
+interface ExitedLike {
+  exited: Promise<number>;
+}
+
+/** Wait for a process's exit code, but give up at `deadlineAt` and return a
+ * sentinel (-1) instead of waiting forever for a direct child that ignores
+ * its kill signal. */
+async function waitExitedUntil(proc: ExitedLike, deadlineAt: number): Promise<{ code: number; settled: boolean }> {
+  let settled = false;
+  const exitedPromise = proc.exited.then((code) => {
+    settled = true;
+    return code;
+  });
+  const remainingMs = Math.max(0, deadlineAt - Date.now());
+  const timeoutPromise = new Promise<number>((resolve) => setTimeout(() => resolve(-1), remainingMs));
+  const code = await Promise.race([exitedPromise, timeoutPromise]);
+  return { code, settled };
+}
+
 export async function execAtom(opts: ExecOptions): Promise<ExecResult> {
   const { tool, args, scriptPath, envelope, timeoutMs, env } = opts;
-  const argv = buildArgv(scriptPath, tool, args);
+
+  let argv: string[];
+  try {
+    argv = buildArgv(scriptPath, tool, args);
+  } catch (e) {
+    // A rejected buildArgv (e.g. the positional-gap guard) never reaches the
+    // subprocess — surface it the same way every other atom failure is
+    // surfaced, so hook telemetry's content[0].text === JSON.stringify(structuredContent)
+    // convention (ADR-0001 Consequences) holds even for pre-spawn errors.
+    return {
+      isError: true,
+      structuredContent: { error: { message: e instanceof Error ? e.message : String(e) } },
+    };
+  }
 
   // Default is "ignore" (ADR-0001 hard rule: subprocess never inherits the
   // server's real stdio, which is the JSON-RPC channel). A `stdin: true`
@@ -197,15 +321,24 @@ export async function execAtom(opts: ExecOptions): Promise<ExecResult> {
     proc.kill();
   }, timeoutMs);
 
+  // Hard ceiling on the whole read phase, computed once so stdout/stderr/exit
+  // all race against the same wall-clock cutoff: timeoutMs for the atom to
+  // behave, plus EXEC_GRACE_MS for its stdio to actually close afterward.
+  // See EXEC_GRACE_MS's comment for why this can't just be `.text()` + `await`.
+  const deadlineAt = Date.now() + timeoutMs + EXEC_GRACE_MS;
+
   let stdout: string;
   let stderr: string;
   let exitCode: number;
   try {
-    [stdout, stderr, exitCode] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-      proc.exited,
+    const [stdoutResult, stderrResult, exitResult] = await Promise.all([
+      readStreamUntil(proc.stdout, deadlineAt),
+      readStreamUntil(proc.stderr, deadlineAt),
+      waitExitedUntil(proc, deadlineAt),
     ]);
+    stdout = stdoutResult.text;
+    stderr = stderrResult.text;
+    exitCode = exitResult.code;
   } finally {
     clearTimeout(timer);
   }

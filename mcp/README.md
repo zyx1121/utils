@@ -139,9 +139,10 @@ bunx tsc --noEmit -p tsconfig.json   # type check
 Coverage:
 
 - `tests/schema.test.ts` — param type → zod schema correctness (including v1.1 `array`), required/optional handling.
-- `tests/exec.test.ts` — argv construction (positional / flagged / boolean / enum / argv_prefix ordering, plus v1.1 `array` and `cli_false` behavior and `stdin: true` never reaching argv), `resolveStdinInput`, and envelope→result mapping (success / failure / non-JSON stdout / timeout), all against fixture data — no real subprocess spawned except where noted below.
+- `tests/exec.test.ts` — argv construction (positional / flagged / boolean / enum / argv_prefix ordering, plus v1.1 `array` and `cli_false` behavior and `stdin: true` never reaching argv), the positional-gap guard (`assertNoPositionalGap`), `resolveStdinInput`, envelope→result mapping (success / failure / non-JSON stdout / timeout) against fixture data, and that a `buildArgv` rejection surfaces through `execAtom()` as a normal `isError` result instead of an uncaught rejection.
 - `tests/manifest.test.ts` — valid manifest loads correctly; a manifest missing required fields or pointing at a nonexistent atom script is skipped (named `ManifestError`, logged to stderr) without taking the rest of the load down; v1.1 field validation (`stdin`/`array`/`cli_false` legality rules); `resolveAtomScript` cross-checked against the real `../scripts/` dir for all three pilot atoms.
 - `tests/confirm-gate.test.ts` — runs a minimal `typer.confirm()` fixture atom through the real `execAtom()` and asserts it aborts fast (non-zero exit, no `timed_out`) under the executor's `stdio[0] = "ignore"` — the ADR-0001 unverified point, now verified.
+- `tests/timeout-grace.test.ts` — real-subprocess regression coverage for the `EXEC_GRACE_MS` hardening (see the atom author rule below): an atom that spawns an uncaptured grandchild (`tests/fixtures/scripts/uncaptured-grandchild.py`, the reviewer's repro template for the `mac-app.py` bug) must still resolve within `timeoutMs + EXEC_GRACE_MS` with `timed_out: true` and whatever partial output was collected — not hang for the grandchild's full lifetime. A well-behaved hung atom with no grandchild (`sleep-forever.sh`) is asserted to resolve near `timeoutMs`, proving the grace window doesn't add latency to the ordinary case.
 
 ## Adding a new manifest
 
@@ -154,3 +155,29 @@ Coverage:
    if you add a fixture).
 4. Restart the server / re-run `tools/list` against it to confirm the tool
    shows up with the schema you expect.
+
+## Atom author rule: `capture_output=True` (or equivalent) on every subprocess call
+
+Any `scripts/<atom>` that itself shells out — `subprocess.run`, `Popen`, etc.
+— **must** capture that child's stdout/stderr (`capture_output=True` in
+Python; the bash/Swift equivalent of not letting a grandchild inherit your
+fds). This isn't just about clean error messages.
+
+The MCP executor's timeout guarantee (ADR-0001) works by killing the atom's
+**direct child process** and then reading its stdout/stderr pipes to EOF.
+`kill()` only signals that one process — it does not touch anything *that*
+process itself spawned. If an atom's subprocess call doesn't capture output,
+the grandchild inherits the atom's stdout/stderr file descriptors (the same
+pipes the executor is reading), and killing the atom does nothing to it. The
+pipe's read end then never sees EOF until the orphaned grandchild happens to
+exit on its own — which can be arbitrarily long after the MCP call was
+supposed to time out.
+
+This actually happened: `scripts/mac-app.py`'s icon-generation and
+`git init`/`add`/`commit` calls were missing `capture_output=True`, and a
+reviewer reproduced a real hang from it. The executor now bounds this from
+its own side too (`EXEC_GRACE_MS` in `lib/exec.ts`, see
+`tests/timeout-grace.test.ts`) — a misbehaving atom returns partial output
+with `timed_out: true` instead of hanging the MCP response forever — but
+that's a backstop, not a substitute for atoms capturing their own children's
+output. Fix it at the source.

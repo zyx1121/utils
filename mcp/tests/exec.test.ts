@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { buildArgv, mapRunOutput, resolveStdinInput } from "../lib/exec.ts";
+import { buildArgv, execAtom, mapRunOutput, resolveStdinInput } from "../lib/exec.ts";
 import type { ManifestTool } from "../lib/manifest.ts";
 
 describe("buildArgv", () => {
@@ -72,6 +72,79 @@ describe("buildArgv", () => {
     };
     const argv = buildArgv("/s", tool, { a: "A", b: "B" });
     expect(argv).toEqual(["/s", "B", "A"]);
+  });
+});
+
+describe("buildArgv — positional gap guard", () => {
+  // Mirrors pve_dns (host, ip) / pve_caddy (domain, upstream): two ordered
+  // optional positionals where the second is only meaningful alongside the
+  // first. Silently building argv with just the second would shift it into
+  // the first's slot and corrupt the call — must reject by name instead.
+  const dnsLikeTool: ManifestTool = {
+    name: "pve_dns",
+    description: "d",
+    params: [
+      { name: "host", type: "string", required: false, positional: true },
+      { name: "ip", type: "string", required: false, positional: true },
+    ],
+  };
+
+  test("rejects a later positional value when an earlier positional is missing", () => {
+    expect(() => buildArgv("/s", dnsLikeTool, { ip: "10.10.10.5" })).toThrow(/'ip'.*'host'/s);
+  });
+
+  test("accepts both positionals present, in order", () => {
+    expect(buildArgv("/s", dnsLikeTool, { host: "vm.internal", ip: "10.10.10.5" })).toEqual([
+      "/s",
+      "vm.internal",
+      "10.10.10.5",
+    ]);
+  });
+
+  test("accepts only the earlier positional present (no gap)", () => {
+    expect(buildArgv("/s", dnsLikeTool, { host: "vm.internal" })).toEqual(["/s", "vm.internal"]);
+  });
+
+  test("accepts neither positional present", () => {
+    expect(buildArgv("/s", dnsLikeTool, {})).toEqual(["/s"]);
+  });
+
+  test("three ordered positionals: gap at the middle one is still caught", () => {
+    const tool: ManifestTool = {
+      name: "t",
+      description: "d",
+      params: [
+        { name: "a", type: "string", required: false, positional: true },
+        { name: "b", type: "string", required: false, positional: true },
+        { name: "c", type: "string", required: false, positional: true },
+      ],
+    };
+    expect(() => buildArgv("/s", tool, { a: "A", c: "C" })).toThrow(/'c'.*'b'/s);
+  });
+});
+
+describe("execAtom — a buildArgv rejection never reaches the subprocess", () => {
+  test("surfaces as a normal isError result, not an uncaught rejection", async () => {
+    const dnsLikeTool: ManifestTool = {
+      name: "pve_dns",
+      description: "d",
+      params: [
+        { name: "host", type: "string", required: false, positional: true },
+        { name: "ip", type: "string", required: false, positional: true },
+      ],
+    };
+
+    const result = await execAtom({
+      scriptPath: "/does/not/matter/never/spawned",
+      tool: dnsLikeTool,
+      args: { ip: "10.10.10.5" },
+      envelope: false,
+      timeoutMs: 1000,
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent.error).toBeDefined();
+    expect((result.structuredContent.error as { message: string }).message).toMatch(/'ip'.*'host'/s);
   });
 });
 
