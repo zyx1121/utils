@@ -31,7 +31,7 @@ utils --list              # bare names, authoritative
 
 # basics
 utils uuid --count 3
-utils json config.json --extract .data.users[0].name
+utils json config.json --extract '.data.users[0].name'
 utils tokens prompt.txt --model opus
 utils skill-usage                            # per-skill adoption / dormant
 utils skill-lint                             # lint SKILL.md frontmatter
@@ -85,7 +85,7 @@ The envelope shape is fixed:
 
 `data` is whatever the command produced; `metadata` carries provenance bits an agent might branch on (source path, format flag, etc). On failure, `error` gives three fields — `message` for what broke, `why` for the underlying cause, `hint` for what to try next. Errors are documentation: agents read them before they read `--help`.
 
-Shared helpers live in [`lib/_envelope.py`](lib/_envelope.py) — `emit`, `fail`, `parse_host`. Every Python script imports them; see [`scripts/uuid.py`](scripts/uuid.py) for the canonical shape.
+Shared helpers live in [`lib/_envelope.py`](lib/_envelope.py) — `emit`, `fail`. Every Python script imports them; see [`scripts/uuid.py`](scripts/uuid.py) for the canonical shape.
 
 ## Per-command setup
 
