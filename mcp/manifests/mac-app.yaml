@@ -3,7 +3,7 @@ envelope: false
 timeout_ms: 90000  # scaffolds + generates icon + git init/add/commit sequentially
 tools:
   - name: mac_app_new
-    description: "Scaffold a new macOS menubar app from the macos-cli-dev house template (SwiftPM target, icon generation, optional git init). Use when starting a brand-new small macOS menubar utility app."
+    description: "Scaffold a new macOS menubar app from the macos-dev house template (SwiftPM target, icon generation, optional git init). Use when starting a brand-new small macOS menubar utility app."
     argv_prefix: ["new"]
     params:
       - name: name
