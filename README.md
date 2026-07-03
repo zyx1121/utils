@@ -31,8 +31,7 @@ utils --list              # bare names, authoritative
 
 # basics
 utils uuid --count 3
-utils hash README.md --algo sha256
-utils ssl-check github.com
+utils json config.json --extract '.data.users[0].name'
 utils tokens prompt.txt --model opus
 utils skill-usage                            # per-skill adoption / dormant
 utils skill-lint                             # lint SKILL.md frontmatter
@@ -71,8 +70,8 @@ The README doesn't enumerate commands — that list grows. `utils --list` is aut
 Scripts emit a JSON envelope on stdout when piped or redirected, and a human-friendly view when stdout is a terminal — toggle is automatic, no `--json` flag.
 
 ```bash
-$ utils ssl-check github.com | jq -r .data.days_remaining
-79
+$ utils tokens prompt.txt --model opus | jq -r .data.tokens
+7
 ```
 
 The envelope shape is fixed:
@@ -86,7 +85,7 @@ The envelope shape is fixed:
 
 `data` is whatever the command produced; `metadata` carries provenance bits an agent might branch on (source path, format flag, etc). On failure, `error` gives three fields — `message` for what broke, `why` for the underlying cause, `hint` for what to try next. Errors are documentation: agents read them before they read `--help`.
 
-Shared helpers live in [`lib/_envelope.py`](lib/_envelope.py) — `emit`, `fail`, `parse_host`. Every Python script imports them; see [`scripts/ssl-check.py`](scripts/ssl-check.py) for the canonical shape.
+Shared helpers live in [`lib/_envelope.py`](lib/_envelope.py) — `emit`, `fail`. Every Python script imports them; see [`scripts/uuid.py`](scripts/uuid.py) for the canonical shape.
 
 ## Per-command setup
 
