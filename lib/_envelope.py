@@ -19,7 +19,6 @@ from __future__ import annotations
 import json as _json
 import sys
 from typing import Any, Callable, NoReturn, Optional
-from urllib.parse import urlparse
 
 
 def is_tty() -> bool:
@@ -74,24 +73,3 @@ def fail(
             "error": {"message": message, "why": why, "hint": hint},
         }, ensure_ascii=False))
     sys.exit(code)
-
-
-def parse_host(target: str, default_port: int = 443) -> tuple[str, int]:
-    """Accept a URL, a `host:port`, or a bare host. Return `(host, port)`.
-
-    URLs are first-class because agents copy them straight out of the
-    conversation — making the script reject `https://example.com/x` and demand
-    a hostname is a needless round-trip.
-    """
-    if "://" in target:
-        u = urlparse(target)
-        if not u.hostname:
-            raise ValueError(f"couldn't extract host from URL: {target!r}")
-        return u.hostname, u.port or default_port
-    if ":" in target and target.count(":") == 1:
-        host, _, port_s = target.rpartition(":")
-        try:
-            return host, int(port_s)
-        except ValueError as e:
-            raise ValueError(f"port must be an integer in {target!r}: {e}") from e
-    return target, default_port
