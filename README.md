@@ -103,7 +103,7 @@ A few commands need a one-time macOS-side tweak before they work:
 bin/
 └── utils            dispatcher — looks up scripts/<cmd> and exec's it
 lib/
-└── _envelope.py     shared output helpers — emit / fail / parse_host
+└── _envelope.py     shared output helpers — emit / fail
 scripts/
 ├── skill-usage.py   `utils skill-usage` — per-skill adoption / recency / co-occurrence / dormant
 ├── skill-lint.py    `utils skill-lint` — lint SKILL.md frontmatter

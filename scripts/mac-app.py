@@ -6,7 +6,7 @@
 #     "rich",
 # ]
 # ///
-"""Scaffold a new macOS menubar app from the macos-cli-dev house template."""
+"""Scaffold a new macOS menubar app from the macos-dev house template."""
 from __future__ import annotations
 
 # Some siblings in this directory shadow stdlib modules (json.py, uuid.py).
@@ -24,7 +24,7 @@ from pathlib import Path
 import typer
 from rich import print
 
-TEMPLATE = Path.home() / ".kilo" / "skills" / "macos-cli-dev" / "template"
+TEMPLATE = Path.home() / ".kilo" / "skills" / "macos-dev" / "template"
 
 # 不會是文字、不該做 token 替換的副檔名。
 BINARY_SUFFIXES = {".icns", ".png", ".pdf", ".tiff", ".gif", ".jpg", ".jpeg"}
@@ -66,7 +66,7 @@ def new(
     no_icon: bool = typer.Option(False, "--no-icon", help="跳過 icon 產生"),
     no_git: bool = typer.Option(False, "--no-git", help="跳過 git init"),
 ) -> None:
-    """從 macos-cli-dev house template 開一個新的 macOS 選單列 app。"""
+    """從 macos-dev house template 開一個新的 macOS 選單列 app。"""
     if not TEMPLATE.is_dir():
         print(f"[red]✗ 找不到模板：{TEMPLATE}[/red]")
         raise typer.Exit(1)
@@ -123,7 +123,7 @@ def new(
 
         _git("init", "-q")
         _git("add", "-A")
-        _git("commit", "-q", "-m", f"init: scaffold {name} from macos-cli-dev template")
+        _git("commit", "-q", "-m", f"init: scaffold {name} from macos-dev template")
         print("[green]✓[/green] git init + first commit")
 
     print(f"\n下一步：\n  cd {target}\n  make run        # build + sign + 開\n"
@@ -137,7 +137,7 @@ if __name__ == "__main__":
     # 而非單一命令(否則 "new" 會被當成 name 引數)。也替未來子命令留位。
     @app.callback()
     def _root() -> None:
-        """macOS app scaffolding (macos-cli-dev house template)."""
+        """macOS app scaffolding (macos-dev house template)."""
 
     app.command("new")(new)
     app()

@@ -16,7 +16,7 @@ from pathlib import Path as _Path
 # (and typer's internals) resolve correctly instead of shadowing.
 _sys.path[:] = [p for p in _sys.path if _Path(p).resolve() != _Path(__file__).resolve().parent]
 
-# Add ../lib for shared output helpers (envelope, fail, parse_host).
+# Add ../lib for shared output helpers (envelope, fail).
 _LIB = str(_Path(__file__).resolve().parent.parent / "lib")
 if _LIB not in _sys.path:
     _sys.path.insert(0, _LIB)
