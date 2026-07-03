@@ -117,7 +117,7 @@ def main(
             if cw < sw or ch < sh:
                 print(
                     f"target {cw}x{ch} is smaller than {sw}x{sh} — padding can't shrink; "
-                    "resize first with `utils image-resize`"
+                    "resize first with `sips -Z` (or another resizer)"
                 )
                 raise typer.Exit(1)
 

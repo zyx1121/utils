@@ -49,7 +49,7 @@ get_desc() {
 }
 
 # Two-column "name  description" listing for --help.
-# Sort by name (post-extension-strip) so e.g. `image` lands before `image-resize`,
+# Sort by name (post-extension-strip) so e.g. `foo` lands before `foo-bar`,
 # and dedup if two scripts ever share a name with different extensions.
 list_with_descs() {
     find "$SCRIPTS_DIR" -maxdepth 1 -type f -perm -u+x 2>/dev/null \
