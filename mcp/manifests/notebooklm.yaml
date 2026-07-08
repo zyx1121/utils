@@ -1,0 +1,60 @@
+atom: notebooklm
+envelope: true
+timeout_ms: 900000  # slide deck generation can take minutes; default --timeout is 600s plus setup/download
+tools:
+  - name: notebooklm
+    description: "UNOFFICIAL, reverse-engineered Google NotebookLM API (via notebooklm-py, pinned) — generates a Slide Deck artifact from notebook sources and downloads it as pptx or pdf. Not a public Google API: it drives the same internal RPCs the NotebookLM web UI uses, breaks the NotebookLM ToS for programmatic access, and can stop working without notice if Google changes the backend. Requires a pre-existing storage_state.json (Google session cookies) produced out-of-band by `notebooklm login` — this tool never logs in and never sees a password. Either pass notebook_id to use an existing notebook, or title + at least one source_url to create a new one first. Use when the user wants a source document turned into a slide deck via NotebookLM."
+    argv_prefix: []
+    params:
+      - name: notebook_id
+        type: string
+        required: false
+        cli: "--notebook-id"
+        description: "Existing notebook ID to generate into. Omit to create a new notebook (requires title and at least one source_url)."
+      - name: title
+        type: string
+        required: false
+        cli: "--title"
+        description: "Title for a new notebook. Required when notebook_id is omitted."
+      - name: source_url
+        type: array
+        required: false
+        cli: "--source-url"
+        description: "Source URL to add (repeatable). Required to build a new notebook; optional extra sources when notebook_id is given."
+      - name: format
+        type: enum
+        enum: ["detailed", "presenter"]
+        required: false
+        cli: "--format"
+        description: "Slide deck style: detailed (full deck, default) or presenter (presenter-notes style)."
+      - name: output
+        type: enum
+        enum: ["pptx", "pdf"]
+        required: false
+        cli: "--output"
+        description: "Downloaded file format. Default: pptx."
+      - name: out
+        type: string
+        required: true
+        cli: "--out"
+        description: "Path to save the downloaded file."
+      - name: instructions
+        type: string
+        required: false
+        cli: "--instructions"
+        description: "Extra generation instructions (tone, focus, audience, etc)."
+      - name: storage_state
+        type: string
+        required: false
+        cli: "--storage-state"
+        description: "Path to a Playwright storage_state.json holding the Google session. Default: notebooklm-py's own convention, ~/.notebooklm/profiles/<profile>/storage_state.json. Treat this file as a live session credential."
+      - name: profile
+        type: string
+        required: false
+        cli: "--profile"
+        description: "notebooklm-py auth profile name. Ignored if storage_state is set."
+      - name: timeout
+        type: number
+        required: false
+        cli: "--timeout"
+        description: "Max seconds to wait for generation to finish before giving up. Default: 600."
