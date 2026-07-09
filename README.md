@@ -1,121 +1,73 @@
-```
-██╗   ██╗████████╗██╗██╗     ███████╗
-██║   ██║╚══██╔══╝██║██║     ██╔════╝
-██║   ██║   ██║   ██║██║     ███████╗
-██║   ██║   ██║   ██║██║     ╚════██║
-╚██████╔╝   ██║   ██║███████╗███████║
- ╚═════╝    ╚═╝   ╚═╝╚══════╝╚══════╝
-```
-
 # utils
 
-Loki's personal CLI toolbox for agents. Each command is a self-contained executable — Python (PEP 723), bash, AppleScript — looked up by name and `exec`'d; runtime declared via shebang. One dispatcher, no package management.
+Loki's agent toolbox: local scripts plus a native stdio MCP server.
 
-> **Scope:** utils is *just the CLI* now. The agent machinery it used to bundle — skills, hooks, subagents, and the observe → review → promote lifecycle — moved to Loki's personal config repo (`kilo`), which symlinks into `~/.claude/`. utils is no longer a Claude Code plugin — just scripts on PATH via the shim below.
+`utils` keeps small machine-local capabilities close to the machine: Calendar,
+Mail, Reminders, Safari, screenshots, PDFs, PVE, E3, Uber Eats, and other
+personal automation. Humans can still call scripts through the CLI; agents
+should use the MCP server.
 
-## Install
+## CLI
 
-The dispatcher goes on PATH with a one-line shim that `exec`s the repo — edits to `scripts/` are live, no reinstall:
+Install the dispatcher shim:
 
 ```bash
 printf '#!/usr/bin/env bash\nexec "$HOME/utils/bin/utils" "$@"\n' > ~/.local/bin/utils && chmod +x ~/.local/bin/utils
 ```
 
-Prerequisite: [`uv`](https://docs.astral.sh/uv/) on PATH — the first Python run fetches declared deps to uv's cache, later runs are near-instant.
-
-## Usage
+Use it:
 
 ```bash
-utils --help              # list available commands
-utils --list              # bare names, authoritative
-
-# basics
-utils uuid --count 3
-utils json config.json --extract '.data.users[0].name'
-utils tokens prompt.txt --model opus
-utils skill-usage                            # per-skill adoption / dormant
-utils skill-lint                             # lint SKILL.md frontmatter
-
-# macOS atoms
-echo "hi" | utils clipboard write
-utils screenshot                             # → /tmp/screenshot.png
-utils notify "build done" --sound Glass
-utils reminders add "ping 建超 tomorrow"
-utils calendar list                          # this week
-utils mail search "ICCCAS"
-utils safari url                             # frontmost tab URL
+utils --list
+utils calendar list
+utils safari url
+utils screenshot
 ```
 
-Under the hood, each command is a self-contained executable. Most are PEP 723 Python:
+Python scripts use PEP 723 and run through `uv`; bash and other executable
+scripts work as long as they have a shebang and exec bit.
 
-```python
-#!/usr/bin/env -S uv run --script
-# /// script
-# requires-python = ">=3.11"
-# dependencies = ["typer", "rich", "..."]
-# ///
-"""<purpose>"""
-import typer
-def main(...): ...
-if __name__ == "__main__":
-    typer.run(main)
+## MCP
+
+The MCP server lives in `mcp/` and uses `@modelcontextprotocol/sdk` directly.
+It exposes only active agent-facing domains:
+
+```text
+calendar e3p mail pdf pve reminders safari screenshot ubereats
 ```
 
-Bash or AppleScript also work — anything with a shebang and exec bit. The dispatcher just looks up `scripts/<cmd>` or `scripts/<cmd>.<ext>` and `exec`s the first match; shebang does the rest. First Python invocation downloads declared deps to uv's cache; later runs are near-instant. No `pip install` step ever.
-
-The README doesn't enumerate commands — that list grows. `utils --list` is authoritative.
-
-## Output contract
-
-Scripts emit a JSON envelope on stdout when piped or redirected, and a human-friendly view when stdout is a terminal — toggle is automatic, no `--json` flag.
+Register it:
 
 ```bash
-$ utils tokens prompt.txt --model opus | jq -r .data.tokens
-7
+claude mcp add utils -- bun run /absolute/path/to/utils/mcp/src/server.ts
 ```
 
-The envelope shape is fixed:
+Codex:
 
-```jsonc
-// success
-{"success": true,  "data": <value>, "metadata": {...}}
-// failure (exit code non-zero)
-{"success": false, "error": {"message": "...", "why": "...", "hint": "..."}}
+```toml
+[mcp_servers.utils]
+command = "bun"
+args = ["run", "/absolute/path/to/utils/mcp/src/server.ts"]
 ```
-
-`data` is whatever the command produced; `metadata` carries provenance bits an agent might branch on (source path, format flag, etc). On failure, `error` gives three fields — `message` for what broke, `why` for the underlying cause, `hint` for what to try next. Errors are documentation: agents read them before they read `--help`.
-
-Shared helpers live in [`lib/_envelope.py`](lib/_envelope.py) — `emit`, `fail`. Every Python script imports them; see [`scripts/uuid.py`](scripts/uuid.py) for the canonical shape.
-
-## Per-command setup
-
-A few commands need a one-time macOS-side tweak before they work:
-
-- **`safari js` / `safari selection`** — these eval JavaScript in the frontmost Safari tab. Apple gates this behind:
-  1. Safari → Settings → Advanced → ✅ *Show Develop menu in menu bar*
-  2. Develop menu → ✅ *Allow JavaScript from Apple Events*
-
-  Plain `safari url` / `title` / `text` / `tabs` / `open` / `close` work out of the box without this. The `text` op alone covers most "extract page content" agent flows — JS is only needed when you want the current selection or arbitrary DOM queries.
 
 ## Layout
 
-```
-bin/
-└── utils            dispatcher — looks up scripts/<cmd> and exec's it
-lib/
-└── _envelope.py     shared output helpers — emit / fail
-scripts/
-├── skill-usage.py   `utils skill-usage` — per-skill adoption / recency / co-occurrence / dormant
-├── skill-lint.py    `utils skill-lint` — lint SKILL.md frontmatter
-└── *                each self-contained, exec bit + shebang (.py PEP 723, .sh, .applescript, ...)
+```text
+bin/utils      CLI dispatcher
+scripts/       script atoms, each self-contained
+lib/           shared script helpers
+mcp/src/       native MCP server and domain tools
 ```
 
-## Why this design
+## Development
 
-An earlier version was a Poetry-managed PyPI package with a global `utils` CLI. That fit human use — `pip install zyx-utils` once, type `utils foo` in any terminal. But the real consumer is the agent, and PyPI carried: build pipeline, version management, sync ceremony, release tagging, signing — all overhead for someone who doesn't need a published binary.
-
-So: scripts live in the repo, the dispatcher `exec`s them via `uv run`, and a one-line shim puts `utils` on PATH. Edit a script, it's live. No `pip`, no version mismatch, no PyPI release dance, no Poetry.
+```bash
+cd mcp
+bun install
+bun test
+bun run typecheck
+```
 
 ## License
 
-[MIT](LICENSE) — if it breaks, you keep both halves.
+[MIT](LICENSE)
