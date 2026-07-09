@@ -1,6 +1,0 @@
-# Intentionally invalid fixture: no 'atom' key. Loader must skip this file
-# (named error, logged to stderr) without crashing the rest of the load.
-envelope: false
-tools:
-  - name: whatever
-    description: "d"

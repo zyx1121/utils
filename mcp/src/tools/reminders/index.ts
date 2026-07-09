@@ -42,7 +42,7 @@ export const remindersTools: ToolboxTool[] = [
   scriptTool({
     name: "reminders_complete",
     description: "Mark the first exact-matching reminder as completed.",
-    inputSchema: { name: z.string().describe("Exact reminder name."), list_name: z.string().optional().describe("List to search.") },
+    inputSchema: { name: z.string().describe("Exact reminder name."), list_name: z.string().optional().describe("List to search."), confirm: z.literal(true).describe("Required explicit confirmation.") },
     script,
     envelope,
     timeoutMs,
@@ -56,7 +56,7 @@ export const remindersTools: ToolboxTool[] = [
   scriptTool({
     name: "reminders_delete",
     description: "Delete the first exact-matching reminder. Destructive.",
-    inputSchema: { name: z.string().describe("Exact reminder name."), list_name: z.string().optional().describe("List to search.") },
+    inputSchema: { name: z.string().describe("Exact reminder name."), list_name: z.string().optional().describe("List to search."), confirm: z.literal(true).describe("Required explicit confirmation.") },
     script,
     envelope,
     timeoutMs,

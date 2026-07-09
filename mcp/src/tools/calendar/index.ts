@@ -93,6 +93,7 @@ export const calendarTools: ToolboxTool[] = [
       cal: z.string().describe("Calendar to search. Required; no cross-calendar fuzzy delete."),
       start: z.string().optional().describe("Range start. Default: today."),
       end: z.string().optional().describe("Range end. Default: today + 30 days."),
+      confirm: z.literal(true).describe("Required explicit confirmation."),
     },
     script,
     envelope,

@@ -68,10 +68,10 @@ export const pdfTools: ToolboxTool[] = [
     buildArgs: (input) => {
       const argv = ["decrypt"];
       pushPos(argv, input.file);
-      pushFlag(argv, "--password", input.password);
       pushFlag(argv, "--out", input.out);
       return argv;
     },
+    buildEnv: (input) => ({ UTILS_PDF_PASSWORD: input.password ?? "" }),
   }),
   scriptTool({
     name: "pdf_merge",

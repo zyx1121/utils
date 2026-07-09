@@ -68,5 +68,13 @@ export const ubereatsTools: ToolboxTool[] = [
       return argv;
     },
   }),
-  scriptTool({ name: "ubereats_dump_cookie", description: "Export Safari ubereats.com Cookie header to a chmod 600 file. Writes live session credential; sensitive.", inputSchema: { path: z.string().describe("Output cookie file path.") }, script, envelope, timeoutMs, buildArgs: (input) => ["--dump-cookie", input.path] }),
+  scriptTool({
+    name: "ubereats_dump_cookie",
+    description: "Export Safari ubereats.com Cookie header to a chmod 600 file. Writes live session credential; requires confirm=true.",
+    inputSchema: { path: z.string().describe("Output cookie file path."), confirm: z.literal(true).describe("Required explicit confirmation.") },
+    script,
+    envelope,
+    timeoutMs,
+    buildArgs: (input) => ["--dump-cookie", input.path],
+  }),
 ];

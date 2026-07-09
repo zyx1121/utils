@@ -1,6 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { runScript } from "./exec.ts";
+import { augmentedEnv, runScript, type RunScriptOptions } from "./exec.ts";
 import { mcpResult, type ToolRunResult } from "./result.ts";
 
 export interface ToolboxTool {
@@ -18,6 +18,7 @@ export interface ScriptToolDefinition<Shape extends z.ZodRawShape> {
   envelope: boolean;
   timeoutMs: number;
   buildArgs(input: z.infer<z.ZodObject<Shape>>): string[];
+  buildEnv?(input: z.infer<z.ZodObject<Shape>>): RunScriptOptions["env"];
 }
 
 export function scriptTool<const Shape extends z.ZodRawShape>(definition: ScriptToolDefinition<Shape>): ToolboxTool {
@@ -34,6 +35,7 @@ export function scriptTool<const Shape extends z.ZodRawShape>(definition: Script
         args: definition.buildArgs(input),
         envelope: definition.envelope,
         timeoutMs: definition.timeoutMs,
+        env: definition.buildEnv ? { ...augmentedEnv(), ...definition.buildEnv(input) } : undefined,
       });
     },
   };

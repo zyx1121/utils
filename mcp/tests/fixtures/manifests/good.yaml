@@ -1,9 +1,0 @@
-atom: echoit
-envelope: false
-tools:
-  - name: echoit
-    description: "test fixture atom — echoes its args"
-    params:
-      - name: msg
-        type: string
-        positional: true

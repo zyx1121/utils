@@ -62,13 +62,13 @@ the MCP surface.
 
 ## Current Tool Surface
 
-67 tools total:
+66 tools total:
 
 - `calendar_list_calendars`, `calendar_list_events`, `calendar_add_event`,
   `calendar_search_events`, `calendar_delete_event`
 - `e3p_logout`, `e3p_whoami`, `e3p_list_courses`,
   `e3p_list_assignments`, `e3p_list_due`, `e3p_get_submission`,
-  `e3p_list_grades`, `e3p_get_content`, `e3p_download_file`, `e3p_call`
+  `e3p_list_grades`, `e3p_get_content`, `e3p_download_file`
 - `mail_list_accounts`, `mail_list_inbox`, `mail_search_messages`,
   `mail_read_message`, `mail_compose_draft`
 - `pdf_info`, `pdf_extract_text`, `pdf_extract_comments`, `pdf_compress`,

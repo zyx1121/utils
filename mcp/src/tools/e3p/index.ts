@@ -74,13 +74,4 @@ export const e3pTools: ToolboxTool[] = [
       return argv;
     },
   }),
-  scriptTool({
-    name: "e3p_call",
-    description: "Escape hatch for Moodle Web Services. Use only when no typed E3 tool covers the function.",
-    inputSchema: { function: z.string().describe("Moodle WS function name."), params: z.array(z.string()).optional().describe("key=value pairs; repeat key[]=v for arrays.") },
-    script,
-    envelope,
-    timeoutMs,
-    buildArgs: (input) => ["call", input.function, ...(input.params ?? [])],
-  }),
 ];

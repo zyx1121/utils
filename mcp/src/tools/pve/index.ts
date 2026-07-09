@@ -6,7 +6,8 @@ const script = "pve.py";
 const envelope = true;
 const timeoutMs = 120000;
 const name = z.string().describe("VM/CT name or VMID.");
-const yes = z.boolean().optional().describe("Skip confirmation. Required as true over MCP for confirm-gated operations; false/omitted fails closed.");
+const yes = z.literal(true).describe("Required explicit confirmation; passed as --yes to confirm-gated CLI commands.");
+const confirm = z.literal(true).describe("Required explicit confirmation.");
 
 export const pveTools: ToolboxTool[] = [
   scriptTool({ name: "pve_list_guests", description: "List PVE VMs and LXC containers.", inputSchema: {}, script, envelope, timeoutMs, buildArgs: () => ["list"] }),
@@ -87,11 +88,11 @@ export const pveTools: ToolboxTool[] = [
     },
   }),
   scriptTool({ name: "pve_list_forwards", description: "List PVE gateway port-forward rules.", inputSchema: {}, script, envelope, timeoutMs, buildArgs: () => ["forward", "--action", "list"] }),
-  scriptTool({ name: "pve_add_forward", description: "Add HOST_PORT:VM_IP:VM_PORT port forward.", inputSchema: { spec: z.string().describe("HOST_PORT:VM_IP:VM_PORT.") }, script, envelope, timeoutMs, buildArgs: (input) => ["forward", input.spec, "--action", "add"] }),
+  scriptTool({ name: "pve_add_forward", description: "Add HOST_PORT:VM_IP:VM_PORT port forward. Exposes a service externally; requires confirm=true.", inputSchema: { spec: z.string().describe("HOST_PORT:VM_IP:VM_PORT."), confirm }, script, envelope, timeoutMs, buildArgs: (input) => ["forward", input.spec, "--action", "add"] }),
   scriptTool({
     name: "pve_remove_forward",
     description: "Remove a PVE forward by iptables line number. Destructive; requires confirm=true.",
-    inputSchema: { line: z.number().describe("Line number from pve_list_forwards."), confirm: z.literal(true).describe("Required explicit confirmation.") },
+    inputSchema: { line: z.number().describe("Line number from pve_list_forwards."), confirm },
     script,
     envelope,
     timeoutMs,
