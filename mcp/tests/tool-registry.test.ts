@@ -6,7 +6,7 @@ describe("native tool registry", () => {
     const domains = new Set(allTools.map((tool) => tool.name.split("_")[0]));
 
     expect([...domains].sort()).toEqual(["calendar", "e3p", "mail", "pdf", "pve", "reminders", "safari", "screenshot", "ubereats"]);
-    expect(allTools).toHaveLength(67);
+    expect(allTools).toHaveLength(66);
   });
 
   test("tool names are unique and prefixed by their domain", () => {

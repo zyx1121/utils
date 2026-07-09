@@ -15,6 +15,7 @@ if _LIB not in _sys.path:
     _sys.path.insert(0, _LIB)
 
 import json
+import os
 import shutil
 import subprocess
 from enum import Enum
@@ -278,13 +279,14 @@ def compress(
 
 
 # ── decrypt ──────────────────────────────────────────────────────
-@app.command(help="Remove password / encryption. --password for the open password if any.")
+@app.command(help="Remove password / encryption. --password for human CLI use, or UTILS_PDF_PASSWORD for MCP/non-interactive use.")
 def decrypt(
     file: Path = typer.Argument(..., help="PDF path."),
     password: str = typer.Option("", "--password", "-P", help="Open password (omit if none)."),
     out: Optional[str] = typer.Option(None, "--out", "-o", help="Output path (default: <name>.decrypted.pdf)."),
 ):
     _check_pdf(file)
+    password = password or os.environ.get("UTILS_PDF_PASSWORD", "")
     try:
         pdf = pikepdf.open(file, password=password)
     except pikepdf.PasswordError:

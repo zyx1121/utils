@@ -1,7 +1,3 @@
-export function compact(values: Array<string | undefined>): string[] {
-  return values.filter((value): value is string => value !== undefined);
-}
-
 export function pushPos(argv: string[], value: unknown): void {
   if (value === undefined) return;
   argv.push(String(value));
