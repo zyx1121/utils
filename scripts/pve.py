@@ -745,17 +745,21 @@ def clone(
 
 # ── create-ct ───────────────────────────────────────────────────
 # Default template: prefer UTILS_PVE_CT_TEMPLATE env; fall back to the
-# standard ubuntu-24.04 vztmpl that ships on every fresh Proxmox local storage.
+# debian-13 (trixie) vztmpl — download via `pveam download local debian-13-standard_...`.
 _CT_TEMPLATE_DEFAULT = os.environ.get(
     "UTILS_PVE_CT_TEMPLATE",
-    "local:vztmpl/ubuntu-24.04-standard_24.04-2_amd64.tar.zst",
+    "local:vztmpl/debian-13-standard_13.1-2_amd64.tar.zst",
 )
+
+# NYCU mirrors the Debian main archive but not security.debian.org (most mirrors
+# don't carry it) — only the main URI gets rewritten, security stays upstream.
+_DEBIAN_MIRROR_URI = "https://debian.cs.nycu.edu.tw/debian"
 
 
 @app.command("create-ct", help="Create a new LXC container from a vztmpl; wires 50<vmid>:22 forward + spoke isolation (mirror of clone but pct-native).")
 def create_ct(
     name: str = typer.Argument(..., help="Hostname for the new container"),
-    template: str = typer.Option(_CT_TEMPLATE_DEFAULT, "--template", envvar="UTILS_PVE_CT_TEMPLATE", help="vztmpl volid (default: ubuntu-24.04-standard)"),
+    template: str = typer.Option(_CT_TEMPLATE_DEFAULT, "--template", envvar="UTILS_PVE_CT_TEMPLATE", help="vztmpl volid (default: debian-13-standard)"),
     vmid: Optional[int] = typer.Option(None, "--vmid", help="Target VMID (default: next free ≥200)"),
     ip: Optional[str] = typer.Option(None, "--ip", help="Internal IP (default: <subnet>.<VMID>)"),
     cores: int = typer.Option(2, "--cores", help="Number of CPU cores"),
@@ -844,6 +848,16 @@ def create_ct(
     # swappiness is a host-level sysctl (not namespaced); set once on the PVE host,
     # all CTs inherit. --swap above gives the cgroup swap limit.
 
+    # Debian's deb822 sources.list.d/debian.sources is the only known layout so far;
+    # no-op (never errors) on any other distro/format.
+    ssh_run(
+        PVE_HOST, "pct", "exec", str(new_vmid), "--",
+        "sh", "-c",
+        "test -f /etc/apt/sources.list.d/debian.sources && "
+        f"sed -i 's#http://deb.debian.org/debian#{_DEBIAN_MIRROR_URI}#' "
+        "/etc/apt/sources.list.d/debian.sources; true",
+    )
+
     if add_forward:
         ssh_run(
             PVE_HOST,
@@ -877,7 +891,7 @@ def create_ct(
         "next_steps": [
             *( ["edit ~/.ssh/config per ssh_alias_block + ssh_alias_note"] if add_forward else [] ),
             f"utils pve dns {name}.internal {ip}",
-            f"ssh -o StrictHostKeyChecking=accept-new {name} echo ok   # smoke test (sshd present in ubuntu-24.04-standard)",
+            f"ssh -o StrictHostKeyChecking=accept-new {name} echo ok   # smoke test (sshd present in debian-13-standard)",
         ],
     })
 
