@@ -43,8 +43,8 @@ Only active agent-facing domains are exposed:
 - `screenshot`
 - `ubereats`
 
-Dormant utilities such as clipboard/json/uuid/tokens/notebooklm remain outside
-the MCP surface.
+Dormant utilities such as clipboard/json/uuid/tokens/notebooklm/md2slide remain
+outside the MCP surface.
 
 ## Naming Rules
 
