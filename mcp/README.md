@@ -36,6 +36,7 @@ Only active agent-facing domains are exposed:
 - `calendar`
 - `e3p`
 - `mail`
+- `md2slide`
 - `pdf`
 - `pve`
 - `reminders`
@@ -62,7 +63,7 @@ the MCP surface.
 
 ## Current Tool Surface
 
-66 tools total:
+68 tools total:
 
 - `calendar_list_calendars`, `calendar_list_events`, `calendar_add_event`,
   `calendar_search_events`, `calendar_delete_event`
@@ -71,6 +72,7 @@ the MCP surface.
   `e3p_list_grades`, `e3p_get_content`, `e3p_download_file`
 - `mail_list_accounts`, `mail_list_inbox`, `mail_search_messages`,
   `mail_read_message`, `mail_compose_draft`
+- `md2slide_init`, `md2slide_build`
 - `pdf_info`, `pdf_extract_text`, `pdf_extract_comments`, `pdf_compress`,
   `pdf_decrypt`, `pdf_merge`, `pdf_split`, `pdf_rotate`, `pdf_render`
 - `pve_list_guests`, `pve_get_status`, `pve_start_guest`, `pve_stop_guest`,
