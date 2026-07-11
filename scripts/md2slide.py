@@ -18,6 +18,8 @@ _LIB = str(_Path(__file__).resolve().parent.parent / "lib")
 if _LIB not in _sys.path:
     _sys.path.insert(0, _LIB)
 
+import base64
+import mimetypes
 import os
 import re
 import subprocess
@@ -72,8 +74,8 @@ section {
   line-height: 1.5;
 }
 
-section h1 { font-size: 2.2em; margin: 0.3em 0; text-align: center; }
-section h2 { font-size: 1.7em; margin: 0.3em 0; text-align: center; }
+section h1 { font-size: 2.2em; margin: 0.3em 0; text-align: center; color: var(--accent, #3297FC); }
+section h2 { font-size: 1.7em; margin: 0.3em 0; text-align: center; color: var(--accent, #3297FC); }
 section h3 { font-size: 1.35em; margin: 0.3em 0; text-align: center; }
 section h4, section h5, section h6 { font-size: 1.1em; margin: 0.3em 0; text-align: center; }
 section p { text-align: center; margin: 0.4em 0; }
@@ -227,12 +229,23 @@ def _parse_comment_directives(inner: str) -> dict:
     return {k: v for k, v in parsed.items() if k in _RECOGNIZED_DIRECTIVES}
 
 
-def _strip_comment_rule(self, tokens, idx, options, env):  # noqa: ANN001
-    """Backstop for html_block/html_inline: any full HTML comment — directive
-    or speaker note — never renders. Real content pass-through unaffected."""
+_RAW_IMG_SRC_RE = re.compile(r'(<img\b[^>]*\bsrc=")([^"]*)(")', re.IGNORECASE)
+
+
+def _raw_html_rule(self, tokens, idx, options, env):  # noqa: ANN001
+    """html_block/html_inline pass-through: strip any full HTML comment
+    (directive or speaker note — never renders), and inline any raw `<img
+    src="...">` the same way `_image_rule` does markdown-syntax images —
+    stage-1.md's `<div><img .../></div>` blocks go through this path, not
+    the `image` token rule."""
     content = tokens[idx].content or ""
     if _COMMENT_RE.match(content.strip()):
         return ""
+    if "<img" in content.lower():
+        md_dir = env.get("md_dir") if isinstance(env, dict) else None
+        content = _RAW_IMG_SRC_RE.sub(
+            lambda m: m.group(1) + _inline_image_src(m.group(2), md_dir) + m.group(3), content
+        )
     return content
 
 
@@ -279,6 +292,26 @@ _SIZE_PREFIX_RE = re.compile(r"^(?:(?:[wh]:\d+)\s*)+")
 _SIZE_TOKEN_RE = re.compile(r"(?P<dim>[wh]):(?P<num>\d+)")
 
 
+def _inline_image_src(src: str, md_dir: Optional[Path]) -> str:
+    """Rewrite a local image src to a `data:` URI so the built HTML is truly
+    self-contained: portable to any --out directory, and off this machine
+    entirely. Remote/already-inlined sources pass through untouched; a src
+    that doesn't resolve to a real file is left as-is (already broken in the
+    source, nothing to embed)."""
+    if not src or src.startswith(("data:", "http://", "https://", "//")):
+        return src
+    if md_dir is None:
+        return src
+    path = (md_dir / src).resolve()
+    if not path.is_file():
+        return src
+    mime, _enc = mimetypes.guess_type(path.name)
+    if mime is None or not mime.startswith("image/"):
+        return src
+    b64 = base64.b64encode(path.read_bytes()).decode("ascii")
+    return f"data:{mime};base64,{b64}"
+
+
 def _image_rule(self, tokens, idx, options, env):  # noqa: ANN001
     token = tokens[idx]
     raw_alt = token.content or ""
@@ -300,6 +333,8 @@ def _image_rule(self, tokens, idx, options, env):  # noqa: ANN001
         styles.append(f"height:{height}px")
     if styles:
         token.attrSet("style", ";".join(styles))
+    md_dir = env.get("md_dir") if isinstance(env, dict) else None
+    token.attrSet("src", _inline_image_src(token.attrGet("src") or "", md_dir))
     return self.renderToken(tokens, idx, options, env)
 
 
@@ -326,10 +361,13 @@ def _highlight_code(code: str, lang: str, _attrs: str) -> str:
 
 
 def _make_md() -> MarkdownIt:
-    md = MarkdownIt("gfm-like", {"html": True, "typographer": False, "highlight": _highlight_code})
+    # breaks=True matches marp-core: a manual line break in the markdown
+    # source becomes <br> instead of collapsing to a space, so decks ported
+    # from marp keep their line-level layout.
+    md = MarkdownIt("gfm-like", {"html": True, "typographer": False, "breaks": True, "highlight": _highlight_code})
     md.add_render_rule("image", _image_rule)
-    md.add_render_rule("html_block", _strip_comment_rule)
-    md.add_render_rule("html_inline", _strip_comment_rule)
+    md.add_render_rule("html_block", _raw_html_rule)
+    md.add_render_rule("html_inline", _raw_html_rule)
     return md
 
 
@@ -477,11 +515,12 @@ def build(
     if not slide_groups:
         fail("no slides found", why="document has no content after front-matter", hint="add at least one heading or paragraph", code=2)
 
+    render_env = {"md_dir": md.parent}
     sections = []
     for group in slide_groups:
         kept, classes, pg_override = _extract_directives(group)
         paginate = global_paginate if pg_override is None else pg_override
-        inner_html = mdit.renderer.render(kept, mdit.options, {})
+        inner_html = mdit.renderer.render(kept, mdit.options, render_env)
         sections.append(_render_section(inner_html, classes, paginate))
 
     full_html = _assemble_html(
