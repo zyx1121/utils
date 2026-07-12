@@ -34,7 +34,7 @@ from markdown_it import MarkdownIt
 from markdown_it.token import Token
 from pygments import highlight as _pygments_highlight
 from pygments.formatters import HtmlFormatter
-from pygments.lexers import TextLexer, get_lexer_by_name, guess_lexer
+from pygments.lexers import TextLexer, get_lexer_by_name
 from pygments.util import ClassNotFound
 from rich.console import Console
 
@@ -355,10 +355,14 @@ def _highlight_code(code: str, lang: str, _attrs: str) -> str:
         except ClassNotFound:
             lexer = None
     if lexer is None:
-        try:
-            lexer = guess_lexer(code)
-        except ClassNotFound:
-            lexer = TextLexer(stripall=False)
+        # No (valid) language tag: render as plain text instead of guessing.
+        # pygments.guess_lexer() is unreliable on short/CJK-heavy snippets —
+        # it can pick an unrelated language lexer and tag unmatched text
+        # (e.g. Chinese prose) as a Pygments "Error" token, which the
+        # default style renders with a red border. Slide code fences here
+        # are mostly chat prompts, not real source, so no highlighting is
+        # the correct default.
+        lexer = TextLexer(stripall=False)
     body = _pygments_highlight(code, lexer, _PYGMENTS_FORMATTER)
     lang_cls = f" language-{lang}" if lang else ""
     return f'<pre class="hl{lang_cls}"><code>{body}</code></pre>\n'
