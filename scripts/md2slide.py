@@ -97,12 +97,16 @@ section pre {
   padding: 0.6em 0.9em;
   text-align: left;
   overflow: hidden;
+  /* size on <pre>, not <pre><code>: the block's line-box strut must match
+     the text size, or each line inherits the section's 26px strut and the
+     block renders tiny text with huge line gaps */
+  font-size: 0.82em;
+  line-height: 1.35;
 }
 section pre code {
   background: none;
   padding: 0;
-  font-size: 0.62em;
-  line-height: 1.45;
+  font-size: 1em;
 }
 
 section blockquote {
@@ -365,6 +369,9 @@ def _make_md() -> MarkdownIt:
     # source becomes <br> instead of collapsing to a space, so decks ported
     # from marp keep their line-level layout.
     md = MarkdownIt("gfm-like", {"html": True, "typographer": False, "breaks": True, "highlight": _highlight_code})
+    # fuzzy links off: bare filenames like CLAUDE.md match the .md TLD and
+    # turn into hyperlinks; only explicit http(s):// URLs should linkify
+    md.linkify.set({"fuzzy_link": False})
     md.add_render_rule("image", _image_rule)
     md.add_render_rule("html_block", _raw_html_rule)
     md.add_render_rule("html_inline", _raw_html_rule)
