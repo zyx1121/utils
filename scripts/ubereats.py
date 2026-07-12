@@ -6,7 +6,8 @@
 """
 Uber Eats 過往訂單明細(誰點了什麼)+ 團購欠款帳本。零外部依賴。
 
-認證:macOS 解析 Safari binarycookies;其他機器用 --cookie-file(內含 Cookie header 那一行)。
+認證:macOS 解析 Safari binarycookies;其他機器用 --cookie-file(內含 Cookie header 那一行),
+未指定時 fallback 讀 ~/.config/ubereats/cookie.txt(push-ue-cookie.sh 推送的固定位置)。
 兩支內部 API:
   getPastOrdersV1            cursor 分頁枚舉(body 第一頁 {} ;之後 {"lastWorkflowUUID": 上頁最後一筆})。
   getReceiptByWorkflowUuidV1 {"contentType":"JSON","workflowUuid":<uuid>} → data.receiptData(再一層 JSON)。
@@ -70,14 +71,23 @@ def cookie_header(cookies, host):
     return "; ".join(parts), len(parts)
 
 
+DEFAULT_COOKIE_FILE = os.path.expanduser("~/.config/ubereats/cookie.txt")
+
+
 def load_cookie_header(cookie_file):
-    """--cookie-file 直接讀那一行;否則 macOS 解析 Safari binarycookies。"""
+    """--cookie-file 直接讀那一行;否則 macOS 解析 Safari binarycookies;
+    最後 fallback 到 ~/.config/ubereats/cookie.txt(push-ue-cookie.sh 推送的固定位置),
+    讓非 macOS 的 agent 機不帶參數也能跑。"""
     if cookie_file:
         hdr = open(os.path.expanduser(cookie_file), encoding="utf-8").read().strip()
         return hdr, len([x for x in hdr.split(";") if "=" in x])
     if os.path.exists(SAFARI_COOKIES):
         return cookie_header(parse_binarycookies(SAFARI_COOKIES), HOST)
-    sys.exit("此機無 Safari binarycookies — 請用 --cookie-file 指定(在 Mac 上 `utils ubereats --dump-cookie` 匯出)")
+    if os.path.exists(DEFAULT_COOKIE_FILE):
+        hdr = open(DEFAULT_COOKIE_FILE, encoding="utf-8").read().strip()
+        return hdr, len([x for x in hdr.split(";") if "=" in x])
+    sys.exit("此機無 Safari binarycookies,也沒有 ~/.config/ubereats/cookie.txt — "
+             "請用 --cookie-file 指定(在 Mac 上 `utils ubereats --dump-cookie` 匯出)")
 
 
 # ---------- API ----------
