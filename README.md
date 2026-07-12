@@ -1,3 +1,8 @@
+> **Archived 2026-07-12** — merged into
+> [`zyx1121/plugin`](https://github.com/zyx1121/plugin) as its `utils/`
+> directory (plugin ADR-0004, landed in 0.4.0 @ `ce1a251`). Development
+> continues there; this repo is kept read-only for history.
+
 # utils
 
 Loki's local MCP toolbox for agents.
